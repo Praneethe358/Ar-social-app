@@ -154,6 +154,7 @@ function registerWebXRHitTestComponent() {
 
 function ARScene() {
   const sceneRef = useRef(null);
+  const reticleRef = useRef(null);
   const latestHitRef = useRef(null);
   const placedPositionsRef = useRef([]);
   const placedEntitiesRef = useRef([]);
@@ -321,18 +322,28 @@ function ARScene() {
         return;
       }
 
+      const reticleObject = reticleRef.current?.object3D;
       const hitPose = latestHitRef.current;
-      if (!hitPose) {
+
+      if (!reticleObject?.visible || !hitPose) {
         setStatus('No surface detected yet. Move phone slowly to scan a plane.');
         return;
       }
+
+      const reticlePose = {
+        position: {
+          x: Number(reticleObject.position.x.toFixed(3)),
+          y: Number(reticleObject.position.y.toFixed(3)),
+          z: Number(reticleObject.position.z.toFixed(3)),
+        },
+      };
 
       const localPost = {
         type: draftPost.type,
         content: draftPost.content,
       };
 
-      const placedEntity = spawnPost(localPost, hitPose);
+      const placedEntity = spawnPost(localPost, reticlePose);
       if (!placedEntity) return;
 
       lastPlacementAtRef.current = now;
@@ -395,14 +406,16 @@ function ARScene() {
           ref={sceneRef}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
           embedded
-          renderer="alpha: true; antialias: true; colorManagement: true; logarithmicDepthBuffer: true"
+          renderer="logarithmicDepthBuffer: true; alpha: true; antialias: true; colorManagement: true"
+          vr-mode-ui="enabled: false"
           xr-mode-ui="enabled: true"
-          webxr="requiredFeatures: hit-test; optionalFeatures: local-floor,dom-overlay; overlayElement: #ar-overlay"
+          webxr="requiredFeatures: hit-test,local-floor"
           webxr-hit-test="reticle: #xr-reticle"
         >
           <a-entity id="xr-camera" camera look-controls wasd-controls-enabled="false" position="0 1.6 0" />
           <a-ring
             id="xr-reticle"
+            ref={reticleRef}
             visible="false"
             radius-inner="0.04"
             radius-outer="0.06"
@@ -413,8 +426,6 @@ function ARScene() {
       ) : null}
 
       <div className="status-pill">{status}</div>
-
-  <div id="ar-overlay" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
 
       <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
         <button type="button" className="primary-btn" onClick={() => setIsComposerOpen(true)}>
