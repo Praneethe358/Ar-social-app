@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import CreatePost from './CreatePost.jsx';
-import PostLoader from './PostLoader.jsx';
 import { createPost } from '../services/api.js';
 
-const AF_FRAME_SRC = 'https://aframe.io/releases/1.4.2/aframe.min.js';
-const AR_JS_SRC = 'https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js';
+const AFRAME_SRC = 'https://aframe.io/releases/1.6.0/aframe.min.js';
+const MAX_POSTS = 80;
+
 const EMOJI_TEXTURES = {
   '🔥': 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f525.png',
   '😂': 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f602.png',
@@ -41,346 +41,354 @@ function loadScript(src) {
   });
 }
 
-function toWorldPosition(userLocation, post) {
-  if (!userLocation) {
-    return { x: 0, y: 1.6, z: -2.5 };
+function registerWebXRHitTestComponent() {
+  if (!window.AFRAME || window.AFRAME.components['webxr-hit-test']) {
+    return;
   }
 
-  const metersPerDegreeLat = 111_320;
-  const metersPerDegreeLng = 111_320 * Math.cos((userLocation.latitude * Math.PI) / 180);
+  window.AFRAME.registerComponent('webxr-hit-test', {
+    schema: {
+      reticle: { type: 'selector' },
+    },
 
-  const deltaX = (post.longitude - userLocation.longitude) * metersPerDegreeLng;
-  const deltaZ = -(post.latitude - userLocation.latitude) * metersPerDegreeLat;
+    init() {
+      this.viewerSpace = null;
+      this.localSpace = null;
+      this.hitTestSource = null;
+      this.lastHitPose = null;
+      this.onSessionEnd = this.onSessionEnd.bind(this);
+      this.onEnterVR = this.onEnterVR.bind(this);
+      this.el.sceneEl.addEventListener('enter-vr', this.onEnterVR);
+    },
 
-  const distanceMeters = Math.sqrt(deltaX * deltaX + deltaZ * deltaZ);
-  if (distanceMeters < 1.0) {
-    return { x: 0, y: 1.6, z: -2.5 };
-  }
+    async onEnterVR() {
+      const sceneEl = this.el.sceneEl;
+      if (!sceneEl.is('ar-mode') || !sceneEl.renderer?.xr) return;
 
-  return {
-    x: Number(deltaX.toFixed(2)),
-    y: 1.6,
-    z: Number(deltaZ.toFixed(2)),
-  };
+      try {
+        const session = sceneEl.renderer.xr.getSession();
+        this.localSpace = sceneEl.renderer.xr.getReferenceSpace();
+        this.viewerSpace = await session.requestReferenceSpace('viewer');
+        this.hitTestSource = await session.requestHitTestSource({ space: this.viewerSpace });
+        session.addEventListener('end', this.onSessionEnd, { once: true });
+      } catch (_error) {
+        sceneEl.emit('webxr-hit-status', { message: 'Hit test unavailable on this device/browser.' });
+      }
+    },
+
+    onSessionEnd() {
+      this.hitTestSource = null;
+      this.viewerSpace = null;
+      this.localSpace = null;
+      this.lastHitPose = null;
+      if (this.data.reticle) {
+        this.data.reticle.object3D.visible = false;
+      }
+    },
+
+    tick(_time, _delta, xrFrame) {
+      const sceneEl = this.el.sceneEl;
+      if (!sceneEl.is('ar-mode') || !xrFrame || !this.hitTestSource || !this.localSpace) {
+        return;
+      }
+
+      const results = xrFrame.getHitTestResults(this.hitTestSource);
+      const reticleEl = this.data.reticle;
+
+      if (!results.length) {
+        if (reticleEl) reticleEl.object3D.visible = false;
+        return;
+      }
+
+      const pose = results[0].getPose(this.localSpace);
+      if (!pose) {
+        if (reticleEl) reticleEl.object3D.visible = false;
+        return;
+      }
+
+      const matrix = new window.THREE.Matrix4().fromArray(pose.transform.matrix);
+      const position = new window.THREE.Vector3();
+      const quaternion = new window.THREE.Quaternion();
+      const scale = new window.THREE.Vector3();
+      matrix.decompose(position, quaternion, scale);
+
+      this.lastHitPose = {
+        position: {
+          x: Number(position.x.toFixed(3)),
+          y: Number(position.y.toFixed(3)),
+          z: Number(position.z.toFixed(3)),
+        },
+        quaternion: {
+          x: quaternion.x,
+          y: quaternion.y,
+          z: quaternion.z,
+          w: quaternion.w,
+        },
+      };
+
+      sceneEl.emit('webxr-hit-test', this.lastHitPose);
+      if (reticleEl) {
+        reticleEl.object3D.visible = true;
+        reticleEl.object3D.position.copy(position);
+        reticleEl.object3D.quaternion.copy(quaternion);
+      }
+    },
+
+    remove() {
+      this.el.sceneEl.removeEventListener('enter-vr', this.onEnterVR);
+      this.onSessionEnd();
+    },
+  });
 }
 
 function ARScene() {
   const sceneRef = useRef(null);
-  const cameraRef = useRef(null);
-  const placementSurfaceRef = useRef(null);
-  const renderedPostIdsRef = useRef(new Set());
+  const latestHitRef = useRef(null);
   const placedPositionsRef = useRef([]);
-  const [sceneReady, setSceneReady] = useState(false);
+  const placedEntitiesRef = useRef([]);
+
   const [scriptsReady, setScriptsReady] = useState(false);
-  const [status, setStatus] = useState('Preparing AR camera...');
-  const [location, setLocation] = useState(null);
-  const [refreshKey] = useState(0);
+  const [status, setStatus] = useState('Loading WebXR AR runtime...');
   const [isComposerOpen, setIsComposerOpen] = useState(false);
-  const [pendingPlacement, setPendingPlacement] = useState(null);
+  const [draftPost, setDraftPost] = useState({ type: 'emoji', content: '🔥' });
 
   const getOffsetPosition = useCallback((basePosition) => {
-    const minDistance = 0.55;
-    const maxAttempts = 12;
+    const minDistance = 0.36;
+    const attempts = 10;
 
-    for (let index = 0; index < maxAttempts; index += 1) {
-      const radius = Math.floor(index / 4) * 0.18;
+    for (let index = 0; index < attempts; index += 1) {
+      const radius = Math.floor(index / 4) * 0.14;
       const angle = (index % 4) * (Math.PI / 2);
       const candidate = {
-        x: Number((basePosition.x + Math.cos(angle) * radius).toFixed(2)),
+        x: Number((basePosition.x + Math.cos(angle) * radius).toFixed(3)),
         y: basePosition.y,
-        z: Number((basePosition.z + Math.sin(angle) * radius).toFixed(2)),
+        z: Number((basePosition.z + Math.sin(angle) * radius).toFixed(3)),
       };
 
-      const isOverlapping = placedPositionsRef.current.some((position) => {
+      const overlap = placedPositionsRef.current.some((position) => {
         const dx = position.x - candidate.x;
         const dz = position.z - candidate.z;
         return Math.sqrt(dx * dx + dz * dz) < minDistance;
       });
 
-      if (!isOverlapping) {
+      if (!overlap) {
         placedPositionsRef.current.push(candidate);
         return candidate;
       }
     }
 
     const fallback = {
-      x: Number((basePosition.x + 0.25).toFixed(2)),
+      x: Number((basePosition.x + 0.18).toFixed(3)),
       y: basePosition.y,
-      z: Number((basePosition.z + 0.2).toFixed(2)),
+      z: Number((basePosition.z + 0.14).toFixed(3)),
     };
     placedPositionsRef.current.push(fallback);
     return fallback;
   }, []);
 
-  const showReticle = useCallback((position) => {
-    const sceneEl = sceneRef.current;
-    if (!sceneEl) return;
-
-    const ring = document.createElement('a-ring');
-    ring.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
-    ring.setAttribute('rotation', '-90 0 0');
-    ring.setAttribute('radius-inner', '0.06');
-    ring.setAttribute('radius-outer', '0.14');
-    ring.setAttribute('color', '#00e5ff');
-    ring.setAttribute('opacity', '0.9');
-    ring.setAttribute('material', 'side: double; shader: flat');
-    ring.setAttribute(
-      'animation__fade',
-      'property: components.material.material.opacity; from: 0.9; to: 0; dur: 900; easing: easeInQuad'
-    );
-    ring.setAttribute(
-      'animation__scale',
-      'property: scale; from: 0.5 0.5 0.5; to: 1.6 1.6 1.6; dur: 900; easing: easeOutQuad'
-    );
-    sceneEl.appendChild(ring);
-    setTimeout(() => ring.parentNode && ring.parentNode.removeChild(ring), 950);
+  const pruneOldPosts = useCallback(() => {
+    while (placedEntitiesRef.current.length > MAX_POSTS) {
+      const oldest = placedEntitiesRef.current.shift();
+      oldest?.remove();
+    }
+    if (placedPositionsRef.current.length > MAX_POSTS) {
+      placedPositionsRef.current = placedPositionsRef.current.slice(-MAX_POSTS);
+    }
   }, []);
 
-  // Imperatively append A-Frame entities to avoid React/A-Frame timing issues in AR mode.
-  const addPostToScene = useCallback((post, explicitPosition, stackIndex = 0) => {
-    const sceneEl = sceneRef.current;
-    if (!sceneEl) return null;
+  const buildEmojiEntity = useCallback((content) => {
+    const emojiImage = document.createElement('a-image');
+    emojiImage.setAttribute('width', '0.35');
+    emojiImage.setAttribute('height', '0.35');
+    emojiImage.setAttribute('material', 'shader: flat; side: double; transparent: true; alphaTest: 0.1');
+    emojiImage.setAttribute('src', EMOJI_TEXTURES[content] || EMOJI_TEXTURES['🔥']);
+    return emojiImage;
+  }, []);
 
-    if (post._id && renderedPostIdsRef.current.has(post._id)) {
-      return null;
-    }
+  const buildTextEntity = useCallback((content) => {
+    const text = document.createElement('a-text');
+    text.setAttribute('value', content);
+    text.setAttribute('align', 'center');
+    text.setAttribute('color', '#FFFFFF');
+    text.setAttribute('width', '2.4');
+    text.setAttribute('wrap-count', '20');
+    text.setAttribute('side', 'double');
+    return text;
+  }, []);
 
-    const basePosition = explicitPosition || toWorldPosition(location, post);
-    const spreadStep = 0.35;
-    const spread = stackIndex * spreadStep;
-    const spreadPosition = {
-      x: Number((basePosition.x + spread).toFixed(2)),
-      y: basePosition.y,
-      z: Number((basePosition.z - spread * 0.25).toFixed(2)),
-    };
-    const position = getOffsetPosition(spreadPosition);
-    const wrapper = document.createElement('a-entity');
-    wrapper.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
-    wrapper.setAttribute('data-post-id', post._id || `local-${Date.now()}`);
-    wrapper.setAttribute('look-at', '#camera-rig');
+  const spawnPost = useCallback(
+    (post, hitPose) => {
+      const sceneEl = sceneRef.current;
+      if (!sceneEl || !hitPose) return null;
 
-    if (post.type === 'emoji') {
-      wrapper.setAttribute('scale', '0.2 0.2 0.2');
-      wrapper.setAttribute(
+      const position = getOffsetPosition({
+        x: hitPose.position.x,
+        y: Number((hitPose.position.y + 0.03).toFixed(3)),
+        z: hitPose.position.z,
+      });
+
+      const root = document.createElement('a-entity');
+      root.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
+      root.setAttribute('scale', '0.2 0.2 0.2');
+      root.setAttribute(
         'animation__pop',
         'property: scale; from: 0.2 0.2 0.2; to: 1 1 1; dur: 220; easing: easeOutBack'
       );
+      root.setAttribute('data-post-id', `local-${Date.now()}`);
 
-      const emojiImage = document.createElement('a-image');
-      emojiImage.setAttribute('width', '0.8');
-      emojiImage.setAttribute('height', '0.8');
-      emojiImage.setAttribute('position', '0 0 0');
-      emojiImage.setAttribute('material', 'side: double; transparent: true; alphaTest: 0.1');
+      const body = post.type === 'emoji' ? buildEmojiEntity(post.content) : buildTextEntity(post.content);
+      root.appendChild(body);
 
-      const textureSrc = EMOJI_TEXTURES[post.content];
-      if (textureSrc) {
-        emojiImage.setAttribute('src', textureSrc);
-        wrapper.appendChild(emojiImage);
-      } else {
-        const fallbackLabel = document.createElement('a-text');
-        fallbackLabel.setAttribute('align', 'center');
-        fallbackLabel.setAttribute('color', '#F6FCFF');
-        fallbackLabel.setAttribute('side', 'double');
-        fallbackLabel.setAttribute('value', post.content);
-        fallbackLabel.setAttribute('width', '3');
-        fallbackLabel.setAttribute('scale', '1 1 1');
-        wrapper.appendChild(fallbackLabel);
-      }
-    } else {
-      const label = document.createElement('a-text');
-      label.setAttribute('align', 'center');
-      label.setAttribute('color', '#F6FCFF');
-      label.setAttribute('side', 'double');
-      label.setAttribute('value', post.content);
-      label.setAttribute('width', '3.6');
-      label.setAttribute('wrap-count', '18');
-      label.setAttribute('scale', '0.9 0.9 0.9');
-      wrapper.appendChild(label);
-    }
-
-    sceneEl.appendChild(wrapper);
-    if (post._id) {
-      renderedPostIdsRef.current.add(post._id);
-    }
-
-    return wrapper;
-  }, [getOffsetPosition, location, showReticle]);
+      sceneEl.appendChild(root);
+      placedEntitiesRef.current.push(root);
+      pruneOldPosts();
+      return root;
+    },
+    [buildEmojiEntity, buildTextEntity, getOffsetPosition, pruneOldPosts]
+  );
 
   useEffect(() => {
     let mounted = true;
 
-    async function prepareAR() {
+    async function prepare() {
       try {
-        await loadScript(AF_FRAME_SRC);
-        await loadScript(AR_JS_SRC);
+        await loadScript(AFRAME_SRC);
+        registerWebXRHitTestComponent();
         if (!mounted) return;
         setScriptsReady(true);
-        setStatus('Camera is live. Tap screen to place an AR post.');
+        setStatus('Tap Enter AR, then tap a real-world surface to place posts.');
       } catch (error) {
         if (!mounted) return;
         setStatus(error.message);
       }
     }
 
-    prepareAR();
+    prepare();
     return () => {
       mounted = false;
     };
   }, []);
 
   useEffect(() => {
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setLocation({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-        });
-      },
-      () => {
-        setStatus('Location denied. Posts can still be created from default position.');
-      },
-      { enableHighAccuracy: true }
-    );
-  }, []);
-
-  useEffect(() => {
     if (!scriptsReady || !sceneRef.current) return;
 
     const sceneEl = sceneRef.current;
-    const placementSurfaceEl = placementSurfaceRef.current;
 
-    const handleLoaded = () => {
-      setSceneReady(true);
+    const handleHitPose = (event) => {
+      latestHitRef.current = event.detail;
     };
 
-    const handleTap = (event) => {
-      const intersection = event?.detail?.intersection;
-      const point = intersection?.point;
-      if (!point) {
-        setStatus('Tap on the ground to choose where your AR post should appear.');
+    const handleStatus = (event) => {
+      if (event.detail?.message) {
+        setStatus(event.detail.message);
+      }
+    };
+
+    const handleTap = () => {
+      if (!sceneEl.is('ar-mode')) {
+        setStatus('Enter AR mode first, then tap on a detected surface.');
         return;
       }
 
-      const placement = {
-        x: Number(point.x.toFixed(2)),
-        y: Number((point.y + 0.05).toFixed(2)),
-        z: Number(point.z.toFixed(2)),
+      const hitPose = latestHitRef.current;
+      if (!hitPose) {
+        setStatus('No surface detected yet. Move phone slowly to scan a plane.');
+        return;
+      }
+
+      const localPost = {
+        type: draftPost.type,
+        content: draftPost.content,
       };
-      showReticle(placement);
-      setPendingPlacement(placement);
-      setIsComposerOpen(true);
-      setStatus('Placement selected. Choose emoji or text and save.');
+
+      const placedEntity = spawnPost(localPost, hitPose);
+      if (!placedEntity) return;
+
+      setStatus('Placed instantly. Syncing post...');
+      createPost({
+        type: localPost.type,
+        content: localPost.content,
+        latitude: 0,
+        longitude: 0,
+      })
+        .then((savedPost) => {
+          if (savedPost?._id) {
+            placedEntity.setAttribute('data-post-id', savedPost._id);
+          }
+          setStatus('Post saved. Tap another surface point to place more.');
+        })
+        .catch(() => {
+          placedEntity.remove();
+          setStatus('API save failed. Removed local post to keep scene consistent.');
+        });
     };
 
-    const handleCameraInit = () => {
-      setStatus('Camera ready. Tap the ground to place an AR post.');
+    const handleARStart = () => {
+      setStatus('AR started. Scan a surface and tap to place.');
     };
 
-    const handleCameraError = () => {
-      setStatus('Camera blocked or unavailable. Allow camera permission for this site.');
+    const handleAREnd = () => {
+      latestHitRef.current = null;
+      setStatus('AR session ended. Tap Enter AR to resume placement.');
     };
 
-    sceneEl.addEventListener('loaded', handleLoaded);
-    placementSurfaceEl?.addEventListener('click', handleTap);
-    sceneEl.addEventListener('camera-init', handleCameraInit);
-    sceneEl.addEventListener('camera-error', handleCameraError);
+    sceneEl.addEventListener('webxr-hit-test', handleHitPose);
+    sceneEl.addEventListener('webxr-hit-status', handleStatus);
+    sceneEl.addEventListener('click', handleTap);
+    sceneEl.addEventListener('enter-vr', handleARStart);
+    sceneEl.addEventListener('exit-vr', handleAREnd);
 
     return () => {
-      sceneEl.removeEventListener('loaded', handleLoaded);
-      placementSurfaceEl?.removeEventListener('click', handleTap);
-      sceneEl.removeEventListener('camera-init', handleCameraInit);
-      sceneEl.removeEventListener('camera-error', handleCameraError);
+      sceneEl.removeEventListener('webxr-hit-test', handleHitPose);
+      sceneEl.removeEventListener('webxr-hit-status', handleStatus);
+      sceneEl.removeEventListener('click', handleTap);
+      sceneEl.removeEventListener('enter-vr', handleARStart);
+      sceneEl.removeEventListener('exit-vr', handleAREnd);
     };
-  }, [scriptsReady]);
+  }, [draftPost, scriptsReady, spawnPost]);
 
-  const handlePostsLoaded = useCallback((loadedPosts) => {
-    loadedPosts.forEach((post, index) => {
-      addPostToScene(post, undefined, index % 4);
-    });
-  }, [addPostToScene]);
-
-  const handlePostSubmit = useCallback(
-    async ({ type, content }) => {
-      const latitude = location?.latitude ?? 0;
-      const longitude = location?.longitude ?? 0;
-
-      if (!pendingPlacement) {
-        setStatus('Tap on the ground first to choose a placement point.');
-        return;
-      }
-
-      const optimisticPost = {
-        _id: `local-${Date.now()}`,
-        type,
-        content,
-      };
-
-      const placedEntity = addPostToScene(optimisticPost, pendingPlacement, 0);
-      setIsComposerOpen(false);
-      setPendingPlacement(null);
-      setStatus('Placed instantly. Syncing to server...');
-
-      try {
-        const savedPost = await createPost({ type, content, latitude, longitude });
-        if (savedPost?._id) {
-          placedEntity?.setAttribute('data-post-id', savedPost._id);
-          renderedPostIdsRef.current.add(savedPost._id);
-        }
-        setStatus('Post saved. Tap again to place another one.');
-      } catch (_error) {
-        placedEntity?.remove();
-        setStatus('Failed to save post. Post was removed. Check backend/API status.');
-      }
-    },
-    [addPostToScene, location, pendingPlacement]
-  );
+  const handleDraftSubmit = useCallback(({ type, content }) => {
+    setDraftPost({ type, content });
+    setIsComposerOpen(false);
+    setStatus(`Draft updated: ${type === 'emoji' ? 'emoji' : 'text'}. Tap in AR to place.`);
+  }, []);
 
   return (
     <section className="camera-stage">
-      <PostLoader
-        refreshKey={refreshKey}
-        onLoaded={handlePostsLoaded}
-        onError={() => setStatus('Unable to load nearby posts from API.')}
-      />
-
       {scriptsReady ? (
         <a-scene
           ref={sceneRef}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
           embedded
-          renderer="alpha: true; antialias: true"
-          vr-mode-ui="enabled: false"
-          arjs="sourceType: webcam; videoTexture: true; debugUIEnabled: false;"
+          renderer="alpha: true; antialias: true; colorManagement: true"
+          xr-mode-ui="enabled: true"
+          webxr="requiredFeatures: hit-test,local-floor; optionalFeatures: anchors,dom-overlay"
+          webxr-hit-test="reticle: #xr-reticle"
         >
-          <a-entity
-            id="camera-rig"
-            ref={cameraRef}
-            camera
-            look-controls
-            cursor="rayOrigin: mouse"
-            raycaster="objects: .placement-surface; far: 100"
-            position="0 1.6 0"
-          />
-          <a-plane
-            ref={placementSurfaceRef}
-            class="placement-surface"
-            position="0 0 -6"
+          <a-entity camera look-controls position="0 1.6 0" />
+          <a-ring
+            id="xr-reticle"
+            visible="false"
+            radius-inner="0.04"
+            radius-outer="0.06"
             rotation="-90 0 0"
-            width="40"
-            height="40"
-            material="color: #ffffff; transparent: true; opacity: 0"
+            material="shader: flat; color: #00E5FF; opacity: 0.85; side: double"
           />
         </a-scene>
       ) : null}
 
       <div className="status-pill">{status}</div>
 
+      <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
+        <button type="button" className="primary-btn" onClick={() => setIsComposerOpen(true)}>
+          Edit Post Draft
+        </button>
+      </div>
+
       <CreatePost
         isOpen={isComposerOpen}
-        onCancel={() => {
-          setIsComposerOpen(false);
-        }}
-        onSubmit={handlePostSubmit}
+        onCancel={() => setIsComposerOpen(false)}
+        onSubmit={handleDraftSubmit}
       />
     </section>
   );
