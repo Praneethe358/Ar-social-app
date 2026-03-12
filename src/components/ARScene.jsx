@@ -472,17 +472,16 @@ function ARScene() {
           vr-mode-ui="enabled: false"
           xr-mode-ui="enabled: true"
           webxr="requiredFeatures: hit-test,local-floor; optionalFeatures: dom-overlay"
-          webxr-hit-test="reticle: #xr-reticle"
+          webxr-hit-test="reticle: #reticle"
         >
           <a-entity id="xr-camera" camera look-controls position="0 1.6 0" />
-          <a-ring
-            id="xr-reticle"
+          <a-entity
+            id="reticle"
             ref={reticleRef}
+            geometry="primitive: ring; radiusInner: 0.02; radiusOuter: 0.03"
+            material="color: green; shader: flat"
             visible="false"
-            radius-inner="0.04"
-            radius-outer="0.06"
             rotation="-90 0 0"
-            material="shader: flat; color: #00E5FF; opacity: 0.85; side: double"
           />
         </a-scene>
       ) : null}
