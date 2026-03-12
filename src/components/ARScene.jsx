@@ -316,10 +316,19 @@ function ARScene() {
     if (!scriptsReady || !sceneRef.current) return;
 
     const sceneEl = sceneRef.current;
-    const handleSceneLoaded = () => {
+    const markSceneReady = () => {
       setSceneLoaded(true);
       setStatus('Scene ready. Tap Enter AR to start camera and hit-test.');
-      appendDebug('A-Frame scene loaded event fired.');
+      appendDebug('A-Frame scene is ready.');
+    };
+
+    if (sceneEl.hasLoaded || sceneEl.renderer) {
+      markSceneReady();
+      return undefined;
+    }
+
+    const handleSceneLoaded = () => {
+      markSceneReady();
     };
 
     sceneEl.addEventListener('loaded', handleSceneLoaded, { once: true });
