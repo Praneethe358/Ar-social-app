@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <script src="/vendor/three.min.js"></script>
+  <script src="/vendor/ar.js"></script>
+</head>
+<body>
+<pre id="out"></pre>
+<script>
+  const out = document.getElementById('out');
+  function log(s) { out.textContent += s + '\n'; console.log(s); }
+
+  log('window.THREE: ' + typeof window.THREE);
+  log('window.THREEx: ' + typeof window.THREEx);
+  log('window.ARjs: ' + typeof window.ARjs);
+
+  if (window.ARjs) {
+    log('ARjs keys: ' + Object.keys(window.ARjs).join(', '));
+    if (window.ARjs.default) log('ARjs.default keys: ' + Object.keys(window.ARjs.default).join(', '));
+    if (window.ARjs.ARjs) log('ARjs.ARjs keys: ' + Object.keys(window.ARjs.ARjs).join(', '));
+  }
+
+  // Dump all nested keys
+  if (window.ARjs) {
+    Object.keys(window.ARjs).forEach(k => {
+      const v = window.ARjs[k];
+      log('ARjs.' + k + ': ' + typeof v);
+      if (typeof v === 'object' && v !== null) {
+        Object.keys(v).forEach(k2 => {
+          log('  ARjs.' + k + '.' + k2 + ': ' + typeof v[k2]);
+        });
+      }
+      if (typeof v === 'function' && v.prototype) {
+        log('  prototype keys: ' + Object.getOwnPropertyNames(v.prototype).join(', '));
+      }
+    });
+  }
+</script>
+</body>
+</html>
