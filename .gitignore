@@ -1,0 +1,18 @@
+# Build output — Render builds this itself
+dist/
+
+# Dependencies
+node_modules/
+
+# Environment variables — never commit secrets
+.env
+.env.local
+.env.*.local
+
+# Vite cache
+.vite/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/

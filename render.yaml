@@ -1,0 +1,26 @@
+services:
+  # ── Frontend static site ──────────────────────────────────────────────────
+  - type: web
+    name: ar-app-frontend
+    runtime: static
+    buildCommand: npm install --include=dev && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+
+  # ── Backend API (Express + MongoDB) ───────────────────────────────────────
+  - type: web
+    name: ar-app-backend
+    runtime: node
+    buildCommand: npm install --include=dev
+    startCommand: node backend/server.js
+    envVars:
+      - key: NODE_VERSION
+        value: 18
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 5000
+      - key: MONGO_URI
+        sync: false   # set in Render dashboard → Environment
