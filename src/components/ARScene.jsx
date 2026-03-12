@@ -2,15 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import CreatePost from './CreatePost.jsx';
 import { createPost } from '../services/api.js';
 
-const AFRAME_SRC = 'https://aframe.io/releases/1.6.0/aframe.min.js';
+const AFRAME_SRC = 'https://aframe.io/releases/1.4.2/aframe.min.js';
 const MAX_POSTS = 80;
 
-const EMOJI_TEXTURES = {
-  '🔥': 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f525.png',
-  '😂': 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f602.png',
-  '🍕': 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f355.png',
-  '🎉': 'https://cdn.jsdelivr.net/gh/twitter/twemoji@14.0.2/assets/72x72/1f389.png',
-};
+const EMOJI_CONTENT = ['🔥', '😂', '🍕', '🎉'];
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -210,12 +205,13 @@ function ARScene() {
   }, []);
 
   const buildEmojiEntity = useCallback((content) => {
-    const emojiImage = document.createElement('a-image');
-    emojiImage.setAttribute('width', '0.35');
-    emojiImage.setAttribute('height', '0.35');
-    emojiImage.setAttribute('material', 'shader: flat; side: double; transparent: true; alphaTest: 0.1');
-    emojiImage.setAttribute('src', EMOJI_TEXTURES[content] || EMOJI_TEXTURES['🔥']);
-    return emojiImage;
+    const emojiText = document.createElement('a-text');
+    emojiText.setAttribute('value', EMOJI_CONTENT.includes(content) ? content : '🔥');
+    emojiText.setAttribute('align', 'center');
+    emojiText.setAttribute('color', '#FFFFFF');
+    emojiText.setAttribute('width', '1.2');
+    emojiText.setAttribute('side', 'double');
+    return emojiText;
   }, []);
 
   const buildTextEntity = useCallback((content) => {
@@ -275,13 +271,8 @@ function ARScene() {
           return;
         }
 
-        const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        await navigator.xr.isSessionSupported('immersive-ar');
         if (!mounted) return;
-
-        if (!isARSupported) {
-          setStatus('Immersive AR is unsupported on this device/browser.');
-          return;
-        }
 
         setStatus('Tap Enter AR, then tap a real-world surface to place posts.');
       } catch (error) {
@@ -406,13 +397,13 @@ function ARScene() {
           ref={sceneRef}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
           embedded
-          renderer="logarithmicDepthBuffer: true; alpha: true; antialias: true; colorManagement: true"
+          renderer="logarithmicDepthBuffer: true;"
           vr-mode-ui="enabled: false"
           xr-mode-ui="enabled: true"
-          webxr="requiredFeatures: hit-test,local-floor"
+          webxr="requiredFeatures: hit-test,local-floor; optionalFeatures: dom-overlay"
           webxr-hit-test="reticle: #xr-reticle"
         >
-          <a-entity id="xr-camera" camera look-controls wasd-controls-enabled="false" position="0 1.6 0" />
+          <a-entity id="xr-camera" camera look-controls position="0 1.6 0" />
           <a-ring
             id="xr-reticle"
             ref={reticleRef}
