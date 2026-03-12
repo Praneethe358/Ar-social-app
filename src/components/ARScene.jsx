@@ -480,24 +480,7 @@ function ARScene() {
 
       <div className="status-pill">{status}</div>
 
-      <div
-        style={{
-          position: 'absolute',
-          left: 12,
-          top: 12,
-          zIndex: 12,
-          maxWidth: 320,
-          maxHeight: 180,
-          overflowY: 'auto',
-          background: 'rgba(0,0,0,0.7)',
-          color: '#d8f3ff',
-          fontSize: 12,
-          lineHeight: 1.35,
-          padding: '8px 10px',
-          borderRadius: 8,
-          pointerEvents: 'none',
-        }}
-      >
+      <div className="debug-panel">
         <strong style={{ display: 'block', marginBottom: 6 }}>WebXR Debug</strong>
         {debugMessages.length === 0 ? <div>Waiting for checks...</div> : null}
         {debugMessages.map((message, index) => (
@@ -505,8 +488,8 @@ function ARScene() {
         ))}
       </div>
 
-      <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
-        <button type="button" className="primary-btn" onClick={handleEnterAR} style={{ marginRight: 8 }}>
+      <div className="top-controls">
+        <button type="button" className="primary-btn" onClick={handleEnterAR}>
           Enter AR
         </button>
         <button type="button" className="primary-btn" onClick={() => setIsComposerOpen(true)}>

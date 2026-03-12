@@ -46,15 +46,25 @@ body,
 
 a-scene,
 .a-canvas,
-.a-enter-vr,
 .arjs-loader {
   position: absolute;
   inset: 0;
 }
 
+.a-enter-vr {
+  position: absolute !important;
+  right: 0.75rem !important;
+  bottom: 5.75rem !important;
+  left: auto !important;
+  top: auto !important;
+  width: auto !important;
+  height: auto !important;
+  z-index: 18 !important;
+}
+
 .status-pill {
   position: absolute;
-  top: 1rem;
+  top: 4.5rem;
   left: 50%;
   transform: translateX(-50%);
   z-index: 12;
@@ -66,6 +76,39 @@ a-scene,
   backdrop-filter: blur(6px);
   max-width: 90%;
   text-align: center;
+}
+
+.debug-panel {
+  position: absolute;
+  left: 0.75rem;
+  top: 0.75rem;
+  z-index: 12;
+  max-width: min(20rem, calc(100vw - 1.5rem));
+  max-height: 10rem;
+  overflow-y: auto;
+  background: rgba(0, 0, 0, 0.7);
+  color: #d8f3ff;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  padding: 0.5rem 0.625rem;
+  border-radius: 0.5rem;
+  pointer-events: none;
+}
+
+.top-controls {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  z-index: 14;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: calc(100vw - 22rem);
+}
+
+.top-controls .primary-btn {
+  min-width: 7rem;
 }
 
 .bottom-nav {
@@ -201,6 +244,24 @@ a-scene,
 }
 
 @media (max-width: 600px) {
+  .status-pill {
+    top: 8rem;
+    max-width: calc(100% - 1rem);
+  }
+
+  .top-controls {
+    top: 11rem;
+    left: 0.75rem;
+    right: 0.75rem;
+    max-width: none;
+    justify-content: stretch;
+  }
+
+  .top-controls .primary-btn {
+    flex: 1 1 calc(50% - 0.25rem);
+    min-width: 0;
+  }
+
   .bottom-nav {
     width: calc(100% - 1rem);
     border-radius: 14px;
