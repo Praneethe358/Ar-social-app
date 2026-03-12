@@ -159,6 +159,12 @@ function ARScene() {
   const [status, setStatus] = useState('Loading WebXR AR runtime...');
   const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [draftPost, setDraftPost] = useState({ type: 'emoji', content: '🔥' });
+  const [debugMessages, setDebugMessages] = useState([]);
+
+  const appendDebug = useCallback((message) => {
+    console.log(`[WebXR Debug] ${message}`);
+    setDebugMessages((previous) => [...previous, message]);
+  }, []);
 
   const getOffsetPosition = useCallback((basePosition) => {
     const minDistance = 0.36;
@@ -260,22 +266,40 @@ function ARScene() {
     let mounted = true;
 
     async function prepare() {
+      appendDebug('Running WebXR capability check...');
+
+      if (!navigator.xr) {
+        appendDebug('WebXR not supported in this browser');
+        if (!mounted) return;
+        setStatus('WebXR not supported in this browser. Use Android Chrome over HTTPS.');
+        return;
+      }
+
+      appendDebug('navigator.xr exists: true');
+
+      let immersiveArSupported = false;
+      try {
+        immersiveArSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        appendDebug(`Immersive AR supported: ${immersiveArSupported}`);
+      } catch (error) {
+        appendDebug(`Immersive AR check failed: ${error.message}`);
+      }
+
+      if (!immersiveArSupported) {
+        if (!mounted) return;
+        setStatus('Immersive AR supported: false. Check Chrome + ARCore + HTTPS.');
+        return;
+      }
+
       try {
         await loadScript(AFRAME_SRC);
         registerWebXRHitTestComponent();
         if (!mounted) return;
         setScriptsReady(true);
-
-        if (!navigator.xr?.isSessionSupported) {
-          setStatus('WebXR not available in this browser. Use Android Chrome over HTTPS.');
-          return;
-        }
-
-        await navigator.xr.isSessionSupported('immersive-ar');
-        if (!mounted) return;
-
+        appendDebug('A-Frame loaded successfully.');
         setStatus('Tap Enter AR, then tap a real-world surface to place posts.');
       } catch (error) {
+        appendDebug(`A-Frame load error: ${error.message}`);
         if (!mounted) return;
         setStatus(error.message);
       }
@@ -417,6 +441,31 @@ function ARScene() {
       ) : null}
 
       <div className="status-pill">{status}</div>
+
+      <div
+        style={{
+          position: 'absolute',
+          left: 12,
+          top: 12,
+          zIndex: 12,
+          maxWidth: 320,
+          maxHeight: 180,
+          overflowY: 'auto',
+          background: 'rgba(0,0,0,0.7)',
+          color: '#d8f3ff',
+          fontSize: 12,
+          lineHeight: 1.35,
+          padding: '8px 10px',
+          borderRadius: 8,
+          pointerEvents: 'none',
+        }}
+      >
+        <strong style={{ display: 'block', marginBottom: 6 }}>WebXR Debug</strong>
+        {debugMessages.length === 0 ? <div>Waiting for checks...</div> : null}
+        {debugMessages.map((message, index) => (
+          <div key={`${message}-${index}`}>• {message}</div>
+        ))}
+      </div>
 
       <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
         <button type="button" className="primary-btn" onClick={() => setIsComposerOpen(true)}>
