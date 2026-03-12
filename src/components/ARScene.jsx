@@ -156,6 +156,7 @@ function ARScene() {
   const lastPlacementAtRef = useRef(0);
 
   const [scriptsReady, setScriptsReady] = useState(false);
+  const [sceneLoaded, setSceneLoaded] = useState(false);
   const [status, setStatus] = useState('Loading WebXR AR runtime...');
   const [isComposerOpen, setIsComposerOpen] = useState(false);
   const [draftPost, setDraftPost] = useState({ type: 'emoji', content: '🔥' });
@@ -315,6 +316,22 @@ function ARScene() {
     if (!scriptsReady || !sceneRef.current) return;
 
     const sceneEl = sceneRef.current;
+    const handleSceneLoaded = () => {
+      setSceneLoaded(true);
+      setStatus('Scene ready. Tap Enter AR to start camera and hit-test.');
+      appendDebug('A-Frame scene loaded event fired.');
+    };
+
+    sceneEl.addEventListener('loaded', handleSceneLoaded, { once: true });
+    return () => {
+      sceneEl.removeEventListener('loaded', handleSceneLoaded);
+    };
+  }, [appendDebug, scriptsReady]);
+
+  useEffect(() => {
+    if (!scriptsReady || !sceneLoaded || !sceneRef.current) return;
+
+    const sceneEl = sceneRef.current;
 
     const handleHitPose = (event) => {
       latestHitRef.current = event.detail;
@@ -406,7 +423,29 @@ function ARScene() {
       sceneEl.removeEventListener('enter-vr', handleARStart);
       sceneEl.removeEventListener('exit-vr', handleAREnd);
     };
-  }, [draftPost, scriptsReady, spawnPost]);
+  }, [draftPost, sceneLoaded, scriptsReady, spawnPost]);
+
+  const handleEnterAR = useCallback(async () => {
+    const sceneEl = sceneRef.current;
+    if (!sceneEl) {
+      setStatus('Scene not ready yet.');
+      return;
+    }
+
+    if (!sceneLoaded) {
+      setStatus('Scene loading… wait a moment and tap Enter AR again.');
+      return;
+    }
+
+    try {
+      appendDebug('Enter AR button tapped. Requesting immersive-ar session...');
+      await sceneEl.enterAR();
+      setStatus('AR session requested. If prompted, allow camera access.');
+    } catch (error) {
+      appendDebug(`enterAR failed: ${error.message}`);
+      setStatus('Failed to start AR session. Check camera permission and Chrome settings.');
+    }
+  }, [appendDebug, sceneLoaded]);
 
   const handleDraftSubmit = useCallback(({ type, content }) => {
     setDraftPost({ type, content });
@@ -420,7 +459,6 @@ function ARScene() {
         <a-scene
           ref={sceneRef}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-          embedded
           renderer="logarithmicDepthBuffer: true;"
           vr-mode-ui="enabled: false"
           xr-mode-ui="enabled: true"
@@ -468,6 +506,9 @@ function ARScene() {
       </div>
 
       <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
+        <button type="button" className="primary-btn" onClick={handleEnterAR} style={{ marginRight: 8 }}>
+          Enter AR
+        </button>
         <button type="button" className="primary-btn" onClick={() => setIsComposerOpen(true)}>
           Edit Post Draft
         </button>
