@@ -67,9 +67,20 @@ function registerWebXRHitTestComponent() {
 
       try {
         const session = sceneEl.renderer.xr.getSession();
-        this.localSpace = sceneEl.renderer.xr.getReferenceSpace();
+        if (!session) {
+          sceneEl.emit('webxr-hit-status', { message: 'Unable to access active AR session.' });
+          return;
+        }
+
+        try {
+          this.localSpace = await session.requestReferenceSpace('local-floor');
+        } catch (_floorError) {
+          this.localSpace = await session.requestReferenceSpace('local');
+        }
+
         this.viewerSpace = await session.requestReferenceSpace('viewer');
         this.hitTestSource = await session.requestHitTestSource({ space: this.viewerSpace });
+        sceneEl.emit('webxr-hit-status', { message: 'Surface scanning active. Move device slowly.' });
         session.addEventListener('end', this.onSessionEnd, { once: true });
       } catch (_error) {
         sceneEl.emit('webxr-hit-status', { message: 'Hit test unavailable on this device/browser.' });
@@ -146,6 +157,7 @@ function ARScene() {
   const latestHitRef = useRef(null);
   const placedPositionsRef = useRef([]);
   const placedEntitiesRef = useRef([]);
+  const lastPlacementAtRef = useRef(0);
 
   const [scriptsReady, setScriptsReady] = useState(false);
   const [status, setStatus] = useState('Loading WebXR AR runtime...');
@@ -256,6 +268,20 @@ function ARScene() {
         registerWebXRHitTestComponent();
         if (!mounted) return;
         setScriptsReady(true);
+
+        if (!navigator.xr?.isSessionSupported) {
+          setStatus('WebXR not available in this browser. Use Android Chrome over HTTPS.');
+          return;
+        }
+
+        const isARSupported = await navigator.xr.isSessionSupported('immersive-ar');
+        if (!mounted) return;
+
+        if (!isARSupported) {
+          setStatus('Immersive AR is unsupported on this device/browser.');
+          return;
+        }
+
         setStatus('Tap Enter AR, then tap a real-world surface to place posts.');
       } catch (error) {
         if (!mounted) return;
@@ -285,6 +311,11 @@ function ARScene() {
     };
 
     const handleTap = () => {
+      const now = Date.now();
+      if (now - lastPlacementAtRef.current < 220) {
+        return;
+      }
+
       if (!sceneEl.is('ar-mode')) {
         setStatus('Enter AR mode first, then tap on a detected surface.');
         return;
@@ -303,6 +334,8 @@ function ARScene() {
 
       const placedEntity = spawnPost(localPost, hitPose);
       if (!placedEntity) return;
+
+      lastPlacementAtRef.current = now;
 
       setStatus('Placed instantly. Syncing post...');
       createPost({
@@ -335,6 +368,7 @@ function ARScene() {
     sceneEl.addEventListener('webxr-hit-test', handleHitPose);
     sceneEl.addEventListener('webxr-hit-status', handleStatus);
     sceneEl.addEventListener('click', handleTap);
+    sceneEl.addEventListener('touchstart', handleTap, { passive: true });
     sceneEl.addEventListener('enter-vr', handleARStart);
     sceneEl.addEventListener('exit-vr', handleAREnd);
 
@@ -342,6 +376,7 @@ function ARScene() {
       sceneEl.removeEventListener('webxr-hit-test', handleHitPose);
       sceneEl.removeEventListener('webxr-hit-status', handleStatus);
       sceneEl.removeEventListener('click', handleTap);
+      sceneEl.removeEventListener('touchstart', handleTap);
       sceneEl.removeEventListener('enter-vr', handleARStart);
       sceneEl.removeEventListener('exit-vr', handleAREnd);
     };
@@ -360,12 +395,12 @@ function ARScene() {
           ref={sceneRef}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
           embedded
-          renderer="alpha: true; antialias: true; colorManagement: true"
+          renderer="alpha: true; antialias: true; colorManagement: true; logarithmicDepthBuffer: true"
           xr-mode-ui="enabled: true"
-          webxr="requiredFeatures: hit-test,local-floor; optionalFeatures: anchors,dom-overlay"
+          webxr="requiredFeatures: hit-test; optionalFeatures: local-floor,dom-overlay; overlayElement: #ar-overlay"
           webxr-hit-test="reticle: #xr-reticle"
         >
-          <a-entity camera look-controls position="0 1.6 0" />
+          <a-entity id="xr-camera" camera look-controls wasd-controls-enabled="false" position="0 1.6 0" />
           <a-ring
             id="xr-reticle"
             visible="false"
@@ -378,6 +413,8 @@ function ARScene() {
       ) : null}
 
       <div className="status-pill">{status}</div>
+
+  <div id="ar-overlay" style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }} />
 
       <div style={{ position: 'absolute', top: 16, right: 16, zIndex: 10 }}>
         <button type="button" className="primary-btn" onClick={() => setIsComposerOpen(true)}>
