@@ -3,7 +3,7 @@ services:
   - type: web
     name: ar-app-frontend
     runtime: static
-    buildCommand: npm install --include=dev && npm run build
+    buildCommand: npm ci --production=false && npm run build
     staticPublishPath: dist
     envVars:
       - key: NODE_VERSION
@@ -13,7 +13,7 @@ services:
   - type: web
     name: ar-app-backend
     runtime: node
-    buildCommand: npm install --include=dev
+    buildCommand: npm ci --production=false
     startCommand: node backend/server.js
     envVars:
       - key: NODE_VERSION
