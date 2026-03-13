@@ -117,7 +117,10 @@ function registerWebXRHitTestComponent() {
       const reticleEl = this.data.reticle;
 
       if (!results.length) {
-        if (reticleEl) reticleEl.object3D.visible = false;
+        if (reticleEl && reticleEl.object3D.visible) {
+          reticleEl.object3D.visible = false;
+          sceneEl.emit('webxr-hit-status', { message: 'Move phone slowly to detect surface.' });
+        }
         return;
       }
 
@@ -249,19 +252,15 @@ function ARScene() {
       const sceneEl = sceneRef.current;
       if (!sceneEl || !hitPose) return null;
 
-      const position = getOffsetPosition({
+      const position = {
         x: hitPose.position.x,
-        y: Number((hitPose.position.y + 0.03).toFixed(3)),
+        y: hitPose.position.y,
         z: hitPose.position.z,
-      });
+      };
 
       const root = document.createElement('a-entity');
       root.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
-      root.setAttribute('scale', '0.2 0.2 0.2');
-      root.setAttribute(
-        'animation__pop',
-        'property: scale; from: 0.2 0.2 0.2; to: 1 1 1; dur: 220; easing: easeOutBack'
-      );
+      root.setAttribute('scale', '1 1 1');
       root.setAttribute('data-post-id', `local-${Date.now()}`);
 
       const body = post.type === 'emoji' ? buildEmojiEntity(post.content) : buildTextEntity(post.content);
@@ -284,7 +283,7 @@ function ARScene() {
       if (!navigator.xr) {
         appendDebug('WebXR not supported in this browser');
         if (!mounted) return;
-        setStatus('WebXR not supported in this browser. Use Android Chrome over HTTPS.');
+        setStatus('WebXR not supported. Use Android Chrome over HTTPS.');
         return;
       }
 
@@ -415,9 +414,9 @@ function ARScene() {
 
       const reticlePose = {
         position: {
-          x: Number(reticleObject.position.x.toFixed(3)),
-          y: Number(reticleObject.position.y.toFixed(3)),
-          z: Number(reticleObject.position.z.toFixed(3)),
+          x: hitPose.position.x,
+          y: hitPose.position.y,
+          z: hitPose.position.z,
         },
       };
 
