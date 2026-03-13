@@ -33,19 +33,29 @@ app.get('*', (_req, res) => {
 
 /* ── Start ── */
 async function startServer() {
-  try {
-    await mongoose.connect(MONGO_URI);
-    console.log(`✓ MongoDB connected: ${MONGO_URI}`);
-
+  // Bind the port FIRST so Render doesn't kill us for "no open port"
+  await new Promise((resolve) => {
     app.listen(PORT, () => {
-      console.log(`✓ Server running on http://localhost:${PORT}`);
+      console.log(`✓ Server listening on port ${PORT}`);
       console.log(`  API:      /api/ar-posts`);
       console.log(`  Frontend: ${distPath}`);
+      resolve();
     });
-  } catch (error) {
-    console.error('Server startup failed:', error.message);
-    process.exit(1);
-  }
+  });
+
+  // Then connect to MongoDB (retries every 5 s on failure)
+  const connectWithRetry = async () => {
+    try {
+      await mongoose.connect(MONGO_URI);
+      console.log(`✓ MongoDB connected`);
+    } catch (error) {
+      console.error('MongoDB connection failed:', error.message);
+      console.log('Retrying in 5 seconds...');
+      setTimeout(connectWithRetry, 5000);
+    }
+  };
+
+  connectWithRetry();
 }
 
 startServer();
