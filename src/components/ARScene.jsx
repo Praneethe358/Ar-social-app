@@ -505,6 +505,25 @@ function ARScene() {
     }
   }, [appendDebug, sceneLoaded]);
 
+  const handleManualPlace = useCallback((e) => {
+    e.stopPropagation();
+    const sceneEl = sceneRef.current;
+    
+    if (!sceneEl || !sceneEl.is('ar-mode')) {
+      setStatus('Enter AR mode first.');
+      return;
+    }
+
+    const hitPose = latestHitRef.current;
+    if (!hitPose || !reticleRef.current?.object3D?.visible) {
+      setStatus('No surface detected yet. Move phone slowly to scan a plane.');
+      return;
+    }
+
+    // Forward the current reticle pose to the spawn system
+    sceneEl.emit('webxr-place-request', hitPose);
+  }, []);
+
   return (
     <section className="camera-stage">
       {scriptsReady ? (
@@ -548,7 +567,9 @@ function ARScene() {
 
         <div className="bottom-ar-ui">
           <div className="create-post-label">
-            <button className="primary-btn pulse-glow">➕ Create Post</button>
+            <button className="primary-btn pulse-glow" onClick={handleManualPlace}>
+              ➕ Create Post
+            </button>
           </div>
           <div className="emoji-picker-row">
             {['😀', '😂', '❤️', '🔥', '🎉'].map((emoji) => (
