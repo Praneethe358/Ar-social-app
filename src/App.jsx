@@ -1,9 +1,15 @@
 import { useState } from 'react';
 import ARScene from './components/ARScene.jsx';
+import './styles.css';
 
-const NAV_ITEMS = ['Camera', 'Create AR Post', 'Map', 'Profile'];
+const NAV_ITEMS = [
+  { id: 'Camera',        icon: '📷', label: 'Camera'  },
+  { id: 'Create AR Post', icon: '✦',  label: 'AR Post' },
+  { id: 'Map',           icon: '🗺️',  label: 'Map'     },
+  { id: 'Profile',       icon: '👤',  label: 'Profile' },
+];
 
-function App() {
+export default function App() {
   const [activeTab, setActiveTab] = useState('Camera');
 
   return (
@@ -14,25 +20,26 @@ function App() {
         <section className="panel-overlay">
           <h2>{activeTab}</h2>
           <p>
-            {activeTab} view is reserved for your next feature.
+            {activeTab === 'Create AR Post' && 'Switch to Camera tab and tap Enter AR to place objects.'}
+            {activeTab === 'Map'            && 'Map view coming soon — see nearby AR posts.'}
+            {activeTab === 'Profile'        && 'Profile view coming soon.'}
           </p>
         </section>
       )}
 
       <nav className="bottom-nav" aria-label="Main navigation">
-        {NAV_ITEMS.map((item) => (
+        {NAV_ITEMS.map(({ id, icon, label }) => (
           <button
-            key={item}
+            key={id}
             type="button"
-            className={item === activeTab ? 'nav-btn nav-btn--active' : 'nav-btn'}
-            onClick={() => setActiveTab(item)}
+            className={id === activeTab ? 'nav-btn nav-btn--active' : 'nav-btn'}
+            onClick={() => setActiveTab(id)}
           >
-            {item}
+            <div style={{ fontSize: '1.25rem', lineHeight: 1, marginBottom: 2 }}>{icon}</div>
+            {label}
           </button>
         ))}
       </nav>
     </main>
   );
 }
-
-export default App;
