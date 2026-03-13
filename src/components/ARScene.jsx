@@ -179,7 +179,8 @@ function registerWebXRHitTestComponent() {
     },
 
     remove() {
-      this.el.sceneEl.removeEventListener('enter-vr', this.onEnterVR);
+      const sceneEl = this.el.sceneEl;
+      sceneEl.removeEventListener('enter-vr', this.onEnterVR);
       this.onSessionEnd();
     },
   });
@@ -195,6 +196,7 @@ function ARScene() {
 
   const [scriptsReady, setScriptsReady] = useState(false);
   const [sceneLoaded, setSceneLoaded] = useState(false);
+  const [isARActive, setIsARActive] = useState(false);
   const [status, setStatus] = useState('Loading WebXR AR runtime...');
   const [draftPost, setDraftPost] = useState({ type: 'emoji', content: '😀' });
   const [debugMessages, setDebugMessages] = useState([]);
@@ -253,13 +255,19 @@ function ARScene() {
    * Uses <a-text> as requested for AR visibility.
    */
   const buildEmojiEntity = useCallback((content) => {
-    const emojiText = document.createElement('a-text');
-    emojiText.setAttribute('value', content);
-    emojiText.setAttribute('align', 'center');
-    emojiText.setAttribute('scale', '0.5 0.5 0.5'); // Adjusted for realistic AR size
-    emojiText.setAttribute('side', 'double');
-    emojiText.setAttribute('always-face-camera', ''); // Custom component to face user
-    return emojiText;
+    // We use a transparent image service for high-quality emojis in WebXR
+    const emojiCode = content.codePointAt(0).toString(16);
+    const imgSrc = `https://emojicdn.elk.sh/${content}?style=apple`;
+    
+    const emojiImg = document.createElement('a-image');
+    emojiImg.setAttribute('src', imgSrc);
+    emojiImg.setAttribute('width', '0.5');
+    emojiImg.setAttribute('height', '0.5');
+    emojiImg.setAttribute('transparent', 'true');
+    emojiImg.setAttribute('shader', 'flat');
+    emojiImg.setAttribute('crossorigin', 'anonymous');
+    emojiImg.setAttribute('always-face-camera', ''); 
+    return emojiImg;
   }, []);
 
   /**
@@ -269,8 +277,8 @@ function ARScene() {
     const text = document.createElement('a-text');
     text.setAttribute('value', content);
     text.setAttribute('align', 'center');
-    text.setAttribute('color', 'orange');
-    text.setAttribute('scale', '0.5 0.5 0.5'); // Adjusted for realistic AR size
+    text.setAttribute('color', '#59f2c7'); // Brand color
+    text.setAttribute('width', '4'); // Larger width for visibility
     text.setAttribute('side', 'double');
     text.setAttribute('always-face-camera', '');
     return text;
@@ -286,9 +294,18 @@ function ARScene() {
     const root = document.createElement('a-entity');
     root.setAttribute('position', `${post.position.x} ${post.position.y} ${post.position.z}`);
     
-    // Set rotation if available, otherwise it defaults to upright
-    if (post.rotation) {
-      root.object3D.quaternion.set(post.rotation.x, post.rotation.y, post.rotation.z, post.rotation.w);
+    if (post.rotation && window.THREE) {
+      try {
+        const rotation = new window.THREE.Euler().setFromQuaternion(
+          new window.THREE.Quaternion(post.rotation.x, post.rotation.y, post.rotation.z, post.rotation.w)
+        );
+        const degX = (rotation.x * 180) / Math.PI;
+        const degY = (rotation.y * 180) / Math.PI;
+        const degZ = (rotation.z * 180) / Math.PI;
+        root.setAttribute('rotation', `${degX} ${degY} ${degZ}`);
+      } catch (e) {
+        appendDebug(`Rotation error: ${e.message}`);
+      }
     }
     
     root.setAttribute('scale', '1 1 1');
@@ -317,9 +334,24 @@ function ARScene() {
         z: hitPose.position.z,
       };
 
+      appendDebug(`Spawning ${post.type} at ${position.x}, ${position.y}, ${position.z}`);
       const root = document.createElement('a-entity');
       root.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
-      root.object3D.quaternion.set(hitPose.quaternion.x, hitPose.quaternion.y, hitPose.quaternion.z, hitPose.quaternion.w);
+      
+      if (hitPose.quaternion && window.THREE) {
+        try {
+          const rotation = new window.THREE.Euler().setFromQuaternion(
+            new window.THREE.Quaternion(hitPose.quaternion.x, hitPose.quaternion.y, hitPose.quaternion.z, hitPose.quaternion.w)
+          );
+          const degX = (rotation.x * 180) / Math.PI;
+          const degY = (rotation.y * 180) / Math.PI;
+          const degZ = (rotation.z * 180) / Math.PI;
+          root.setAttribute('rotation', `${degX} ${degY} ${degZ}`);
+        } catch (e) {
+          appendDebug(`Placement rotation error: ${e.message}`);
+        }
+      }
+      
       root.setAttribute('scale', '1 1 1');
       root.setAttribute('data-post-id', `local-${Date.now()}`);
 
@@ -436,8 +468,9 @@ function ARScene() {
     const sceneEl = sceneRef.current;
 
     const placePostAtPose = (hitPose) => {
+      appendDebug(`placePostAtPose triggered. Pose: ${JSON.stringify(hitPose.position)}`);
       const now = Date.now();
-      if (now - lastPlacementAtRef.current < 220) {
+      if (now - lastPlacementAtRef.current < 450) { // Slight throttle increase
         return;
       }
 
@@ -489,18 +522,28 @@ function ARScene() {
     };
 
     const handleSceneClick = (event) => {
-      if (!sceneEl.is('ar-mode')) return;
-      // If we have a valid hit-test result from the most recent tick, use it
-      if (latestHitRef.current && document.getElementById('reticle')?.object3D.visible) {
+      if (!sceneEl.is('ar-mode')) {
+        appendDebug('Scene click ignored: not in AR mode');
+        return;
+      }
+      const reticle = document.getElementById('reticle');
+      if (latestHitRef.current && reticle?.object3D.visible) {
+        appendDebug('Scene click: Triggering placement');
         placePostAtPose(latestHitRef.current);
+      } else {
+        appendDebug('Scene click ignored: no hit result or reticle hidden');
       }
     };
 
     const handleARStart = () => {
+      appendDebug('AR session started (enter-vr event)');
+      setIsARActive(true);
       setStatus('AR started. Move device slowly to scan surface.');
     };
 
     const handleAREnd = () => {
+      appendDebug('AR session ended (exit-vr event)');
+      setIsARActive(false);
       latestHitRef.current = null;
       setStatus('AR session ended. Tap Enter AR to resume placement.');
     };
@@ -512,7 +555,16 @@ function ARScene() {
     sceneEl.addEventListener('enter-vr', handleARStart);
     sceneEl.addEventListener('exit-vr', handleAREnd);
 
+    // Periodically sync isARActive state for React UI reliability
+    const syncState = setInterval(() => {
+      const active = sceneEl.is('ar-mode');
+      if (active !== isARActive) {
+        setIsARActive(active);
+      }
+    }, 1000);
+
     return () => {
+      clearInterval(syncState);
       sceneEl.removeEventListener('webxr-hit-test', handleHitPose);
       sceneEl.removeEventListener('webxr-hit-status', handleStatus);
       sceneEl.removeEventListener('webxr-place-request', handleXRPlaceRequest);
@@ -545,6 +597,18 @@ function ARScene() {
   }, [appendDebug, sceneLoaded]);
 
 
+
+  const handleManualPlacement = useCallback((e) => {
+    e.stopPropagation();
+    if (!isARActive) return;
+    const reticle = document.getElementById('reticle');
+    if (latestHitRef.current && reticle?.object3D.visible) {
+      appendDebug('Manual placement triggered');
+      placePostAtPose(latestHitRef.current);
+    } else {
+      setStatus('No surface detected. Move phone slowly.');
+    }
+  }, [isARActive, placePostAtPose]);
 
   return (
     <section className="camera-stage">
@@ -589,14 +653,25 @@ function ARScene() {
         </div>
 
         <div className="top-controls">
-          <button type="button" className="primary-btn" onClick={handleEnterAR}>
-            Enter AR
-          </button>
+          {!isARActive && (
+            <button type="button" className="primary-btn" onClick={handleEnterAR}>
+              Enter AR
+            </button>
+          )}
         </div>
 
         <div className="bottom-ar-ui">
           <div className="create-post-label">
             <div className="status-pill" style={{position:'static', marginBottom: '10px'}}>{draftPost.type === 'emoji' ? `Placing: ${draftPost.content}` : 'Placing text'}</div>
+            {isARActive && (
+              <button 
+                className="primary-btn pulse-glow" 
+                onClick={handleManualPlacement}
+                style={{marginBottom: '10px', width: '100%', borderRadius: '12px'}}
+              >
+                👇 Place Here
+              </button>
+            )}
           </div>
           <div className="emoji-picker-row">
             {['😀', '😂', '❤️', '🔥', '🎉'].map((emoji) => (
