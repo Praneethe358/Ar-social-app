@@ -1,697 +1,508 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPost, fetchNearbyPosts } from '../services/api.js';
 
-const AFRAME_SRC = 'https://aframe.io/releases/1.4.2/aframe.min.js';
-const MAX_POSTS = 80;
+/* ────────────────────────────────────────────
+   Constants
+   ──────────────────────────────────────────── */
+const AFRAME_CDN = 'https://aframe.io/releases/1.4.2/aframe.min.js';
+const MAX_POSTS  = 80;
 
+/* ────────────────────────────────────────────
+   Helpers
+   ──────────────────────────────────────────── */
+
+/** Load an external script once, returning a Promise. */
 function loadScript(src) {
   return new Promise((resolve, reject) => {
-    const existing = document.querySelector(`script[data-script-src="${src}"]`);
-    if (existing?.dataset.loaded === '1') {
-      resolve();
-      return;
-    }
+    const tag = document.querySelector(`script[data-src="${src}"]`);
+    if (tag?.dataset.ready === '1') { resolve(); return; }
+    if (tag) { tag.addEventListener('load', resolve, { once: true }); return; }
 
-    if (existing) {
-      existing.addEventListener('load', () => resolve(), { once: true });
-      existing.addEventListener('error', () => reject(new Error(`Failed to load ${src}`)), {
-        once: true,
-      });
-      return;
-    }
-
-    const script = document.createElement('script');
-    script.src = src;
-    script.async = true;
-    script.dataset.scriptSrc = src;
-    script.onload = () => {
-      script.dataset.loaded = '1';
-      resolve();
-    };
-    script.onerror = () => reject(new Error(`Failed to load ${src}`));
-    document.head.appendChild(script);
+    const s  = document.createElement('script');
+    s.src    = src;
+    s.async  = true;
+    s.dataset.src = src;
+    s.onload = () => { s.dataset.ready = '1'; resolve(); };
+    s.onerror = () => reject(new Error(`Script load failed: ${src}`));
+    document.head.appendChild(s);
   });
 }
 
-function registerWebXRHitTestComponent() {
-  if (!window.AFRAME || window.AFRAME.components['webxr-hit-test']) {
-    return;
-  }
+/* ────────────────────────────────────────────
+   A-Frame component registration (runs once)
+   ──────────────────────────────────────────── */
+function registerComponents() {
+  const AF = window.AFRAME;
+  if (!AF || AF.components['webxr-hit-test']) return;
 
-  window.AFRAME.registerComponent('always-face-camera', {
+  /* ── Billboard: always face the user camera ── */
+  AF.registerComponent('always-face-camera', {
     tick() {
-      const camera = this.el.sceneEl?.camera;
-      if (camera) {
-        const cameraPos = new window.THREE.Vector3();
-        camera.getWorldPosition(cameraPos);
-        // Ensure text is kept upright
-        cameraPos.y = this.el.object3D.position.y;
-        this.el.object3D.lookAt(cameraPos);
-      }
-    }
+      const cam = this.el.sceneEl?.camera;
+      if (!cam) return;
+      const cp = new window.THREE.Vector3();
+      cam.getWorldPosition(cp);
+      cp.y = this.el.object3D.position.y;          // keep upright
+      this.el.object3D.lookAt(cp);
+    },
   });
 
-  window.AFRAME.registerComponent('webxr-hit-test', {
-    schema: {
-      reticle: { type: 'selector' },
-    },
+  /* ── WebXR hit-test: drives the reticle ── */
+  AF.registerComponent('webxr-hit-test', {
+    schema: { reticle: { type: 'selector' } },
 
     init() {
-      this.viewerSpace = null;
-      this.localSpace = null;
+      this.viewerSpace   = null;
+      this.localSpace    = null;
       this.hitTestSource = null;
-      this.lastHitPose = null;
-      this.session = null;
-      this.onSessionEnd = this.onSessionEnd.bind(this);
-      this.onEnterVR = this.onEnterVR.bind(this);
-      this.onXRSelect = this.onXRSelect.bind(this);
-      this.el.sceneEl.addEventListener('enter-vr', this.onEnterVR);
+      this.lastHitPose   = null;
+      this.session       = null;
+
+      this._onEnterVR    = this._onEnterVR.bind(this);
+      this._onSessionEnd = this._onSessionEnd.bind(this);
+      this._onXRSelect   = this._onXRSelect.bind(this);
+
+      this.el.sceneEl.addEventListener('enter-vr', this._onEnterVR);
     },
 
-    async onEnterVR() {
-      const sceneEl = this.el.sceneEl;
-      if (!sceneEl.is('ar-mode') || !sceneEl.renderer?.xr) return;
+    /* AR session bootstrap */
+    async _onEnterVR() {
+      const scene = this.el.sceneEl;
+      if (!scene.is('ar-mode') || !scene.renderer?.xr) return;
 
       try {
-        const session = sceneEl.renderer.xr.getSession();
-        if (!session) {
-          sceneEl.emit('webxr-hit-status', { message: 'Unable to access active AR session.' });
-          return;
-        }
+        const session = scene.renderer.xr.getSession();
+        if (!session) return;
 
-        try {
-          this.localSpace = await session.requestReferenceSpace('local-floor');
-        } catch (_floorError) {
-          this.localSpace = await session.requestReferenceSpace('local');
-        }
+        try   { this.localSpace = await session.requestReferenceSpace('local-floor'); }
+        catch { this.localSpace = await session.requestReferenceSpace('local');       }
 
-        this.viewerSpace = await session.requestReferenceSpace('viewer');
+        this.viewerSpace   = await session.requestReferenceSpace('viewer');
         this.hitTestSource = await session.requestHitTestSource({ space: this.viewerSpace });
-        this.session = session;
-        this.session.addEventListener('select', this.onXRSelect);
-        sceneEl.emit('webxr-hit-status', { message: 'Surface scanning active. Move device slowly.' });
-        session.addEventListener('end', this.onSessionEnd, { once: true });
-      } catch (_error) {
-        sceneEl.emit('webxr-hit-status', { message: 'Hit test unavailable on this device/browser.' });
+        this.session       = session;
+
+        session.addEventListener('select', this._onXRSelect);
+        session.addEventListener('end', this._onSessionEnd, { once: true });
+
+        scene.emit('webxr-hit-status', { message: 'Scanning… move device slowly.' });
+        console.log('[HitTest] AR session initialised');
+      } catch (e) {
+        scene.emit('webxr-hit-status', { message: 'Hit-test not available.' });
+        console.warn('[HitTest] init error', e);
       }
     },
 
-    onXRSelect() {
-      const sceneEl = this.el.sceneEl;
+    /* User taps screen in the XR session */
+    _onXRSelect() {
       if (!this.lastHitPose) {
-        sceneEl.emit('webxr-hit-status', { message: 'No surface detected yet. Move phone slowly.' });
+        this.el.sceneEl.emit('webxr-hit-status', { message: 'No surface yet — keep scanning.' });
         return;
       }
-
-      sceneEl.emit('webxr-place-request', this.lastHitPose);
+      // Emit a deep-clone so it is fully independent of future tick updates
+      this.el.sceneEl.emit('webxr-place-request', JSON.parse(JSON.stringify(this.lastHitPose)));
     },
 
-    onSessionEnd() {
-      if (this.session) {
-        this.session.removeEventListener('select', this.onXRSelect);
-      }
-      this.session = null;
-      this.hitTestSource = null;
-      this.viewerSpace = null;
-      this.localSpace = null;
-      this.lastHitPose = null;
-      const reticleEl = document.getElementById('reticle');
-      if (reticleEl) {
-        reticleEl.object3D.visible = false;
-      }
+    _onSessionEnd() {
+      if (this.session) this.session.removeEventListener('select', this._onXRSelect);
+      this.session = this.hitTestSource = this.viewerSpace = this.localSpace = this.lastHitPose = null;
+      const r = document.getElementById('reticle');
+      if (r) r.object3D.visible = false;
     },
 
+    /* Every frame: run the hit-test and move the reticle */
     tick() {
-      const sceneEl = this.el.sceneEl;
-      const xrFrame = sceneEl.frame;
-      if (!sceneEl.is('ar-mode') || !xrFrame || !this.hitTestSource || !this.localSpace) {
-        return;
-      }
+      const scene = this.el.sceneEl;
+      const frame = scene.frame;
+      if (!scene.is('ar-mode') || !frame || !this.hitTestSource || !this.localSpace) return;
 
-      const results = xrFrame.getHitTestResults(this.hitTestSource);
-      const reticleEl = document.getElementById('reticle');
+      const results = frame.getHitTestResults(this.hitTestSource);
+      const reticle = document.getElementById('reticle');
 
       if (!results.length) {
-        if (reticleEl && reticleEl.object3D.visible) {
-          reticleEl.object3D.visible = false;
-          sceneEl.emit('webxr-hit-status', { message: 'Move phone slowly to detect surface.' });
+        if (reticle?.object3D.visible) {
+          reticle.object3D.visible = false;
+          scene.emit('webxr-hit-status', { message: 'Surface lost — keep scanning.' });
         }
         return;
       }
 
       const pose = results[0].getPose(this.localSpace);
-      if (!pose) {
-        if (reticleEl && reticleEl.object3D.visible) {
-          reticleEl.object3D.visible = false;
-        }
-        return;
-      }
+      if (!pose) return;
 
-      const matrix = new window.THREE.Matrix4().fromArray(pose.transform.matrix);
-      const position = new window.THREE.Vector3();
-      const quaternion = new window.THREE.Quaternion();
-      const scale = new window.THREE.Vector3();
-      matrix.decompose(position, quaternion, scale);
+      const m = new window.THREE.Matrix4().fromArray(pose.transform.matrix);
+      const p = new window.THREE.Vector3();
+      const q = new window.THREE.Quaternion();
+      const s = new window.THREE.Vector3();
+      m.decompose(p, q, s);
 
+      // Store a plain-object snapshot (NOT a live reference)
       this.lastHitPose = {
-        position: {
-          x: position.x,
-          y: position.y,
-          z: position.z,
-        },
-        quaternion: {
-          x: quaternion.x,
-          y: quaternion.y,
-          z: quaternion.z,
-          w: quaternion.w,
-        },
+        position:   { x: p.x, y: p.y, z: p.z },
+        quaternion: { x: q.x, y: q.y, z: q.z, w: q.w },
       };
 
-      sceneEl.emit('webxr-hit-test', this.lastHitPose);
-      if (reticleEl) {
-        if (!reticleEl.object3D.visible) {
-          sceneEl.emit('webxr-hit-status', { message: 'Surface detected! Tap anywhere to place.' });
+      if (reticle) {
+        if (!reticle.object3D.visible) {
+          scene.emit('webxr-hit-status', { message: 'Surface found! Tap "Place Here".' });
         }
-        reticleEl.object3D.visible = true;
-        reticleEl.object3D.position.copy(position);
-        reticleEl.object3D.quaternion.copy(quaternion);
+        reticle.object3D.visible = true;
+        reticle.object3D.position.set(p.x, p.y, p.z);
+        reticle.object3D.quaternion.set(q.x, q.y, q.z, q.w);
       }
     },
 
     remove() {
-      const sceneEl = this.el.sceneEl;
-      sceneEl.removeEventListener('enter-vr', this.onEnterVR);
-      this.onSessionEnd();
+      this.el.sceneEl.removeEventListener('enter-vr', this._onEnterVR);
+      this._onSessionEnd();
     },
   });
 }
 
+/* ────────────────────────────────────────────
+   Core helper: addEmojiToScene
+   Creates an <a-text> entity at a FIXED world
+   position that is fully independent of the reticle.
+   ──────────────────────────────────────────── */
+function addEmojiToScene(sceneEl, emoji, pos, id) {
+  console.log(`[Place] addEmojiToScene "${emoji}" @ (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})`);
+
+  const el = document.createElement('a-text');
+  el.setAttribute('value', emoji);
+  el.setAttribute('align', 'center');
+  el.setAttribute('side', 'double');
+  el.setAttribute('width', '6');                       // large enough to be readable
+  el.setAttribute('color', '#ffffff');
+  el.setAttribute('position', `${pos.x} ${pos.y + 0.15} ${pos.z}`);  // slight Y lift
+  el.setAttribute('scale', '1 1 1');
+  el.setAttribute('always-face-camera', '');            // billboard
+  el.setAttribute('data-post-id', id || `local-${Date.now()}`);
+
+  sceneEl.appendChild(el);
+  return el;
+}
+
+/** Same as above but for multi-line text posts */
+function addTextToScene(sceneEl, text, pos, id) {
+  console.log(`[Place] addTextToScene "${text}" @ (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})`);
+
+  const el = document.createElement('a-text');
+  el.setAttribute('value', text);
+  el.setAttribute('align', 'center');
+  el.setAttribute('side', 'double');
+  el.setAttribute('width', '4');
+  el.setAttribute('color', '#59f2c7');
+  el.setAttribute('position', `${pos.x} ${pos.y + 0.15} ${pos.z}`);
+  el.setAttribute('scale', '1 1 1');
+  el.setAttribute('always-face-camera', '');
+  el.setAttribute('data-post-id', id || `local-${Date.now()}`);
+
+  sceneEl.appendChild(el);
+  return el;
+}
+
+/* ────────────────────────────────────────────
+   Persistence helpers
+   ──────────────────────────────────────────── */
+
+/** POST to /api/ar-posts */
+async function savePost(emoji, position, type = 'emoji') {
+  console.log('[Save] saving post to backend…', { emoji, position });
+  try {
+    const saved = await createPost({
+      type,
+      content:   emoji,
+      position:  { x: position.x, y: position.y, z: position.z },
+      rotation:  { x: 0, y: 0, z: 0, w: 1 },  // identity quaternion
+      timestamp: new Date().toISOString(),
+    });
+    console.log('[Save] success', saved?._id);
+    return saved;
+  } catch (err) {
+    console.error('[Save] failed', err.message);
+    return null;
+  }
+}
+
+/** GET /api/ar-posts and spawn each one */
+async function loadPosts(sceneEl, entitiesRef, debugFn) {
+  console.log('[Load] fetching saved AR posts…');
+  debugFn('Fetching saved posts from backend…');
+  try {
+    const posts = await fetchNearbyPosts();
+    if (!posts?.length) {
+      debugFn('No saved posts found.');
+      return;
+    }
+    debugFn(`Loading ${posts.length} saved post(s)…`);
+    posts.forEach((p) => {
+      if (!p.position) return;
+      const entity =
+        p.type === 'text'
+          ? addTextToScene(sceneEl, p.content, p.position, p._id)
+          : addEmojiToScene(sceneEl, p.content, p.position, p._id);
+      entitiesRef.current.push(entity);
+    });
+    debugFn(`Placed ${posts.length} saved post(s) in scene.`);
+    console.log(`[Load] ${posts.length} posts restored`);
+  } catch (err) {
+    debugFn('Failed to load saved posts.');
+    console.error('[Load] error', err);
+  }
+}
+
+/* ────────────────────────────────────────────
+   React component
+   ──────────────────────────────────────────── */
 function ARScene() {
-  const sceneRef = useRef(null);
-  const reticleRef = useRef(null);
-  const latestHitRef = useRef(null);
-  const placedPositionsRef = useRef([]);
+  const sceneRef          = useRef(null);
+  const latestHitRef      = useRef(null);   // latest hit-test snapshot (plain object)
   const placedEntitiesRef = useRef([]);
-  const lastPlacementAtRef = useRef(0);
+  const lastPlaceTime     = useRef(0);
 
-  const [scriptsReady, setScriptsReady] = useState(false);
+  const [ready, setReady]           = useState(false); // A-Frame loaded
   const [sceneLoaded, setSceneLoaded] = useState(false);
-  const [isARActive, setIsARActive] = useState(false);
-  const [status, setStatus] = useState('Loading WebXR AR runtime...');
-  const [draftPost, setDraftPost] = useState({ type: 'emoji', content: '😀' });
-  const [debugMessages, setDebugMessages] = useState([]);
+  const [arActive, setArActive]     = useState(false);
+  const [status, setStatus]         = useState('Loading AR runtime…');
+  const [draft, setDraft]           = useState({ type: 'emoji', content: '😀' });
+  const [logs, setLogs]             = useState([]);
 
-  const appendDebug = useCallback((message) => {
-    console.log(`[WebXR Debug] ${message}`);
-    setDebugMessages((previous) => [...previous, message]);
+  const log = useCallback((msg) => {
+    console.log(`[AR] ${msg}`);
+    setLogs((p) => [...p.slice(-40), msg]);   // keep last 40
   }, []);
 
-  const getOffsetPosition = useCallback((basePosition) => {
-    const minDistance = 0.36;
-    const attempts = 10;
-
-    for (let index = 0; index < attempts; index += 1) {
-      const radius = Math.floor(index / 4) * 0.14;
-      const angle = (index % 4) * (Math.PI / 2);
-      const candidate = {
-        x: Number((basePosition.x + Math.cos(angle) * radius).toFixed(3)),
-        y: basePosition.y,
-        z: Number((basePosition.z + Math.sin(angle) * radius).toFixed(3)),
-      };
-
-      const overlap = placedPositionsRef.current.some((position) => {
-        const dx = position.x - candidate.x;
-        const dz = position.z - candidate.z;
-        return Math.sqrt(dx * dx + dz * dz) < minDistance;
-      });
-
-      if (!overlap) {
-        placedPositionsRef.current.push(candidate);
-        return candidate;
-      }
-    }
-
-    const fallback = {
-      x: Number((basePosition.x + 0.18).toFixed(3)),
-      y: basePosition.y,
-      z: Number((basePosition.z + 0.14).toFixed(3)),
-    };
-    placedPositionsRef.current.push(fallback);
-    return fallback;
-  }, []);
-
-  const pruneOldPosts = useCallback(() => {
-    while (placedEntitiesRef.current.length > MAX_POSTS) {
-      const oldest = placedEntitiesRef.current.shift();
-      oldest?.remove();
-    }
-    if (placedPositionsRef.current.length > MAX_POSTS) {
-      placedPositionsRef.current = placedPositionsRef.current.slice(-MAX_POSTS);
-    }
-  }, []);
-
-  /**
-   * Builds an A-Frame entity for an emoji post.
-   * Uses <a-text> as requested for AR visibility.
-   */
-  const buildEmojiEntity = useCallback((content) => {
-    // We use a transparent image service for high-quality emojis in WebXR
-    const emojiCode = content.codePointAt(0).toString(16);
-    const imgSrc = `https://emojicdn.elk.sh/${content}?style=apple`;
-    
-    const emojiImg = document.createElement('a-image');
-    emojiImg.setAttribute('src', imgSrc);
-    emojiImg.setAttribute('width', '0.5');
-    emojiImg.setAttribute('height', '0.5');
-    emojiImg.setAttribute('transparent', 'true');
-    emojiImg.setAttribute('shader', 'flat');
-    emojiImg.setAttribute('crossorigin', 'anonymous');
-    emojiImg.setAttribute('always-face-camera', ''); 
-    return emojiImg;
-  }, []);
-
-  /**
-   * Builds an A-Frame entity for a text post.
-   */
-  const buildTextEntity = useCallback((content) => {
-    const text = document.createElement('a-text');
-    text.setAttribute('value', content);
-    text.setAttribute('align', 'center');
-    text.setAttribute('color', '#59f2c7'); // Brand color
-    text.setAttribute('width', '4'); // Larger width for visibility
-    text.setAttribute('side', 'double');
-    text.setAttribute('always-face-camera', '');
-    return text;
-  }, []);
-
-  /**
-   * Spawns a post that was retrieved from the backend.
-   */
-  const spawnSavedPost = useCallback((post) => {
-    const sceneEl = sceneRef.current;
-    if (!sceneEl || !post.position) return null;
-
-    const root = document.createElement('a-entity');
-    root.setAttribute('position', `${post.position.x} ${post.position.y} ${post.position.z}`);
-    
-    if (post.rotation && window.THREE) {
-      try {
-        const rotation = new window.THREE.Euler().setFromQuaternion(
-          new window.THREE.Quaternion(post.rotation.x, post.rotation.y, post.rotation.z, post.rotation.w)
-        );
-        const degX = (rotation.x * 180) / Math.PI;
-        const degY = (rotation.y * 180) / Math.PI;
-        const degZ = (rotation.z * 180) / Math.PI;
-        root.setAttribute('rotation', `${degX} ${degY} ${degZ}`);
-      } catch (e) {
-        appendDebug(`Rotation error: ${e.message}`);
-      }
-    }
-    
-    root.setAttribute('scale', '1 1 1');
-    root.setAttribute('data-post-id', post._id);
-
-    const body = post.type === 'emoji' ? buildEmojiEntity(post.content) : buildTextEntity(post.content);
-    root.appendChild(body);
-
-    sceneEl.appendChild(root);
-    placedEntitiesRef.current.push(root);
-    pruneOldPosts();
-    return root;
-  }, [buildEmojiEntity, buildTextEntity, pruneOldPosts]);
-
-  /**
-   * Spawns a new post at the current hit-test position (reticle).
-   */
-  const spawnPost = useCallback(
-    (post, hitPose) => {
-      const sceneEl = sceneRef.current;
-      if (!sceneEl || !hitPose) return null;
-
-      const position = {
-        x: hitPose.position.x,
-        y: hitPose.position.y,
-        z: hitPose.position.z,
-      };
-
-      appendDebug(`Spawning ${post.type} at ${position.x}, ${position.y}, ${position.z}`);
-      const root = document.createElement('a-entity');
-      root.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
-      
-      if (hitPose.quaternion && window.THREE) {
-        try {
-          const rotation = new window.THREE.Euler().setFromQuaternion(
-            new window.THREE.Quaternion(hitPose.quaternion.x, hitPose.quaternion.y, hitPose.quaternion.z, hitPose.quaternion.w)
-          );
-          const degX = (rotation.x * 180) / Math.PI;
-          const degY = (rotation.y * 180) / Math.PI;
-          const degZ = (rotation.z * 180) / Math.PI;
-          root.setAttribute('rotation', `${degX} ${degY} ${degZ}`);
-        } catch (e) {
-          appendDebug(`Placement rotation error: ${e.message}`);
-        }
-      }
-      
-      root.setAttribute('scale', '1 1 1');
-      root.setAttribute('data-post-id', `local-${Date.now()}`);
-
-      const body = post.type === 'emoji' ? buildEmojiEntity(post.content) : buildTextEntity(post.content);
-      root.appendChild(body);
-
-      sceneEl.appendChild(root);
-      placedEntitiesRef.current.push(root);
-      pruneOldPosts();
-      
-      return { root, position, rotation: hitPose.quaternion };
-    },
-    [buildEmojiEntity, buildTextEntity, pruneOldPosts]
-  );
-
+  /* ── 1. Boot: load A-Frame ── */
   useEffect(() => {
-    let mounted = true;
+    let alive = true;
+    (async () => {
+      log('Checking WebXR support…');
+      if (!navigator.xr) { setStatus('WebXR not supported. Use Chrome on Android + HTTPS.'); return; }
+      const ok = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+      log(`immersive-ar supported: ${ok}`);
+      if (!ok) { setStatus('Immersive AR not supported on this device.'); return; }
 
-    async function prepare() {
-      appendDebug('Running WebXR capability check...');
+      await loadScript(AFRAME_CDN);
+      registerComponents();
+      if (!alive) return;
+      setReady(true);
+      log('A-Frame loaded & components registered.');
+      setStatus('Tap "Enter AR" to begin.');
+    })();
+    return () => { alive = false; };
+  }, [log]);
 
-      if (!navigator.xr) {
-        appendDebug('WebXR not supported in this browser');
-        if (!mounted) return;
-        setStatus('WebXR not supported. Use Android Chrome over HTTPS.');
-        return;
-      }
+  /* ── 2. Wait for A-Frame scene to initialise ── */
+  useEffect(() => {
+    if (!ready || !sceneRef.current) return;
+    const s = sceneRef.current;
+    const done = () => { setSceneLoaded(true); log('A-Frame scene ready.'); };
+    if (s.hasLoaded || s.renderStarted) { done(); return; }
+    s.addEventListener('loaded', done, { once: true });
+    return () => s.removeEventListener('loaded', done);
+  }, [ready, log]);
 
-      appendDebug('navigator.xr exists: true');
+  /* ── 3. Load saved posts once scene is up ── */
+  useEffect(() => {
+    if (!sceneLoaded || !sceneRef.current) return;
+    loadPosts(sceneRef.current, placedEntitiesRef, log);
+  }, [sceneLoaded, log]);
 
-      let immersiveArSupported = false;
-      try {
-        immersiveArSupported = await navigator.xr.isSessionSupported('immersive-ar');
-        appendDebug(`Immersive AR supported: ${immersiveArSupported}`);
-      } catch (error) {
-        appendDebug(`Immersive AR check failed: ${error.message}`);
-      }
+  /* ── 4. Wire up all A-Frame / XR event listeners ── */
+  useEffect(() => {
+    if (!ready || !sceneLoaded || !sceneRef.current) return;
+    const scene = sceneRef.current;
 
-      if (!immersiveArSupported) {
-        if (!mounted) return;
-        setStatus('Immersive AR supported: false. Check Chrome + ARCore + HTTPS.');
-        return;
-      }
+    const onHitPose = (e) => {
+      // Store a deep-clone so it never mutates when reticle moves
+      latestHitRef.current = JSON.parse(JSON.stringify(e.detail));
+    };
 
-      try {
-        await loadScript(AFRAME_SRC);
-        registerWebXRHitTestComponent();
-        if (!mounted) return;
-        setScriptsReady(true);
-        appendDebug('A-Frame loaded successfully.');
-        setStatus('Tap Enter AR, then tap a real-world surface to place posts.');
-      } catch (error) {
-        appendDebug(`A-Frame load error: ${error.message}`);
-        if (!mounted) return;
-        setStatus(error.message);
-      }
-    }
+    const onStatus = (e) => {
+      if (e.detail?.message) setStatus(e.detail.message);
+    };
 
-    prepare();
+    const onEnter = () => { setArActive(true);  log('AR session started.'); };
+    const onExit  = () => { setArActive(false); latestHitRef.current = null; log('AR session ended.'); setStatus('AR ended. Tap Enter AR to restart.'); };
+
+    scene.addEventListener('webxr-hit-test',    onHitPose);
+    scene.addEventListener('webxr-hit-status',  onStatus);
+    scene.addEventListener('enter-vr',          onEnter);
+    scene.addEventListener('exit-vr',           onExit);
+
+    // If the XR select event fires, also place
+    const onXRPlace = (e) => {
+      if (!scene.is('ar-mode')) return;
+      handlePlace(e.detail);
+    };
+    scene.addEventListener('webxr-place-request', onXRPlace);
+
     return () => {
-      mounted = false;
+      scene.removeEventListener('webxr-hit-test',     onHitPose);
+      scene.removeEventListener('webxr-hit-status',   onStatus);
+      scene.removeEventListener('enter-vr',           onEnter);
+      scene.removeEventListener('exit-vr',            onExit);
+      scene.removeEventListener('webxr-place-request', onXRPlace);
     };
-  }, []);
+  });   // intentionally no deps → always latest closures
 
-  useEffect(() => {
-    if (!scriptsReady || !sceneRef.current) return;
-
-    const sceneEl = sceneRef.current;
-    const markSceneReady = () => {
-      setSceneLoaded(true);
-      setStatus('Scene ready. Tap Enter AR to start camera and hit-test.');
-      appendDebug('A-Frame scene is ready.');
-    };
-
-    if (sceneEl.hasLoaded || sceneEl.renderer) {
-      markSceneReady();
-      return undefined;
-    }
-
-    const handleSceneLoaded = () => {
-      markSceneReady();
-    };
-
-    sceneEl.addEventListener('loaded', handleSceneLoaded, { once: true });
-    return () => {
-      sceneEl.removeEventListener('loaded', handleSceneLoaded);
-    };
-  }, [appendDebug, scriptsReady]);
-
-  // Load nearby posts when scene boots up
-  useEffect(() => {
-    if (!sceneLoaded) return;
-    
-    async function loadInitialPosts() {
-      appendDebug('Fetching nearby AR posts from backend...');
-      try {
-        const posts = await fetchNearbyPosts();
-        if (posts && posts.length > 0) {
-          appendDebug(`Found ${posts.length} prior posts. Submitting to engine...`);
-          posts.forEach((post) => spawnSavedPost(post));
-          setStatus(`Loaded ${posts.length} historical posts.`);
-        }
-      } catch (err) {
-        appendDebug('Failed loading nearby posts.');
-      }
-    }
-    
-    loadInitialPosts();
-  }, [sceneLoaded, appendDebug, spawnSavedPost]);
-
-  const placePostAtPose = useCallback((hitPose) => {
-    appendDebug(`placePostAtPose triggered. Pose: ${JSON.stringify(hitPose.position)}`);
+  /* ── Core placement function ── */
+  function handlePlace(hitPose) {
+    if (!hitPose?.position) { log('handlePlace: no pose'); return; }
     const now = Date.now();
-    if (now - lastPlacementAtRef.current < 450) { // Slight throttle increase
-      return;
+    if (now - lastPlaceTime.current < 500) return;  // debounce
+    lastPlaceTime.current = now;
+
+    // ★ KEY FIX: clone the position so the entity is INDEPENDENT of the reticle
+    const pos = { x: hitPose.position.x, y: hitPose.position.y, z: hitPose.position.z };
+    const scene = sceneRef.current;
+    if (!scene) return;
+
+    log(`Placing ${draft.type} "${draft.content}" at (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})`);
+
+    // Add to scene — the entity gets a FIXED position string attribute
+    const entity = draft.type === 'text'
+      ? addTextToScene(scene, draft.content, pos)
+      : addEmojiToScene(scene, draft.content, pos);
+
+    placedEntitiesRef.current.push(entity);
+    // Prune if too many
+    while (placedEntitiesRef.current.length > MAX_POSTS) {
+      placedEntitiesRef.current.shift()?.remove();
     }
 
-    const localPost = {
-      type: draftPost.type,
-      content: draftPost.content,
-    };
+    setStatus('Placed! Saving to server…');
 
-    const { root: placedEntity, position, rotation } = spawnPost(localPost, hitPose) || {};
-    if (!placedEntity) return;
-
-    lastPlacementAtRef.current = now;
-
-    setStatus('Placed instantly. Syncing post...');
-    createPost({
-      type: localPost.type,
-      content: localPost.content,
-      position,
-      rotation,
-      timestamp: new Date().toISOString()
-    })
-      .then((savedPost) => {
-        if (savedPost && savedPost._id) {
-          placedEntity.setAttribute('data-post-id', savedPost._id);
-        }
-        setStatus('Post saved successfully!');
-      })
-      .catch((error) => {
-        console.error(error);
-        placedEntity.setAttribute('data-post-id', `offline-${Date.now()}`);
-        setStatus('Placed locally. API sync failed; object stays in AR scene.');
-      });
-  }, [draftPost.type, draftPost.content, spawnPost, appendDebug]);
-
-  useEffect(() => {
-    if (!scriptsReady || !sceneLoaded || !sceneRef.current) return;
-
-    const sceneEl = sceneRef.current;
-
-    const handleHitPose = (event) => {
-      latestHitRef.current = event.detail;
-    };
-
-    const handleStatus = (event) => {
-      if (event.detail?.message) {
-        setStatus(event.detail.message);
-      }
-    };
-
-    const handleXRPlaceRequest = (event) => {
-      if (!sceneEl.is('ar-mode')) return;
-      // In AR mode, event.detail is the hitPose
-      placePostAtPose(event.detail);
-    };
-
-    const handleSceneClick = (event) => {
-      if (!sceneEl.is('ar-mode')) {
-        appendDebug('Scene click ignored: not in AR mode');
-        return;
-      }
-      const reticle = document.getElementById('reticle');
-      if (latestHitRef.current && reticle?.object3D.visible) {
-        appendDebug('Scene click: Triggering placement');
-        placePostAtPose(latestHitRef.current);
+    // Persist to backend
+    savePost(draft.content, pos, draft.type).then((saved) => {
+      if (saved?._id) {
+        entity.setAttribute('data-post-id', saved._id);
+        setStatus('Saved ✓');
+        log(`Saved post ${saved._id}`);
       } else {
-        appendDebug('Scene click ignored: no hit result or reticle hidden');
+        setStatus('Placed locally (save failed).');
+        log('Backend save failed — post is local only.');
       }
-    };
+    });
+  }
 
-    const handleARStart = () => {
-      appendDebug('AR session started (enter-vr event)');
-      setIsARActive(true);
-      setStatus('AR started. Move device slowly to scan surface.');
-    };
-
-    const handleAREnd = () => {
-      appendDebug('AR session ended (exit-vr event)');
-      setIsARActive(false);
-      latestHitRef.current = null;
-      setStatus('AR session ended. Tap Enter AR to resume placement.');
-    };
-
-    sceneEl.addEventListener('webxr-hit-test', handleHitPose);
-    sceneEl.addEventListener('webxr-hit-status', handleStatus);
-    sceneEl.addEventListener('webxr-place-request', handleXRPlaceRequest);
-    sceneEl.addEventListener('click', handleSceneClick);
-    sceneEl.addEventListener('enter-vr', handleARStart);
-    sceneEl.addEventListener('exit-vr', handleAREnd);
-
-    // Periodically sync isARActive state for React UI reliability
-    const syncState = setInterval(() => {
-      const active = sceneEl.is('ar-mode');
-      if (active !== isARActive) {
-        setIsARActive(active);
-      }
-    }, 1000);
-
-    return () => {
-      clearInterval(syncState);
-      sceneEl.removeEventListener('webxr-hit-test', handleHitPose);
-      sceneEl.removeEventListener('webxr-hit-status', handleStatus);
-      sceneEl.removeEventListener('webxr-place-request', handleXRPlaceRequest);
-      sceneEl.removeEventListener('click', handleSceneClick);
-      sceneEl.removeEventListener('enter-vr', handleARStart);
-      sceneEl.removeEventListener('exit-vr', handleAREnd);
-    };
-  }, [placePostAtPose, sceneLoaded, scriptsReady]);
-
-  const handleEnterAR = useCallback(async () => {
-    const sceneEl = sceneRef.current;
-    if (!sceneEl) {
-      setStatus('Scene not ready yet.');
-      return;
-    }
-
-    if (!sceneLoaded) {
-      setStatus('Scene loading… wait a moment and tap Enter AR again.');
-      return;
-    }
-
-    try {
-      appendDebug('Enter AR button tapped. Requesting immersive-ar session...');
-      await sceneEl.enterAR();
-      setStatus('AR session requested. If prompted, allow camera access.');
-    } catch (error) {
-      appendDebug(`enterAR failed: ${error.message}`);
-      setStatus('Failed to start AR session. Check camera permission and Chrome settings.');
-    }
-  }, [appendDebug, sceneLoaded]);
-
-
-
-  const handleManualPlacement = useCallback((e) => {
+  /* ── Manual "Place Here" button handler ── */
+  const onPlaceHere = useCallback((e) => {
     e.stopPropagation();
-    if (!isARActive) return;
     const reticle = document.getElementById('reticle');
-    if (latestHitRef.current && reticle?.object3D.visible) {
-      appendDebug('Manual placement triggered');
-      placePostAtPose(latestHitRef.current);
-    } else {
-      setStatus('No surface detected. Move phone slowly.');
+    if (!latestHitRef.current || !reticle?.object3D.visible) {
+      setStatus('No surface detected — move phone slowly.');
+      return;
     }
-  }, [isARActive, placePostAtPose]);
+    // ★ KEY FIX: use reticle.object3D.position.clone() for a frozen snapshot
+    const rPos = reticle.object3D.position.clone();
+    const frozenPose = {
+      position: { x: rPos.x, y: rPos.y, z: rPos.z },
+    };
+    handlePlace(frozenPose);
+  }, [draft]);   // eslint-disable-line react-hooks/exhaustive-deps
 
+  /* ── Enter AR ── */
+  const enterAR = useCallback(async () => {
+    const s = sceneRef.current;
+    if (!s || !sceneLoaded) { setStatus('Scene not ready yet.'); return; }
+    try {
+      log('Requesting immersive-ar session…');
+      await s.enterAR();
+    } catch (err) {
+      log(`enterAR error: ${err.message}`);
+      setStatus('Failed to start AR. Check camera permissions.');
+    }
+  }, [sceneLoaded, log]);
+
+  /* ────────────────────────────────────────────
+     JSX
+     ──────────────────────────────────────────── */
   return (
     <section className="camera-stage">
-      {scriptsReady ? (
+      {/* ── A-Frame scene ── */}
+      {ready && (
         <a-scene
           ref={sceneRef}
           style={{ position: 'absolute', inset: 0, width: '100%', height: '100%' }}
-          renderer="logarithmicDepthBuffer: true;"
+          renderer="logarithmicDepthBuffer: true"
           vr-mode-ui="enabled: false"
           xr-mode-ui="enabled: true"
           webxr="requiredFeatures: hit-test,local-floor; optionalFeatures: dom-overlay; overlayElement: #ar-overlay"
           webxr-hit-test="reticle: #reticle"
-          cursor="rayOrigin: mouse; fuse: false"
-          raycaster="objects: .clickable"
         >
           <a-entity id="xr-camera" camera look-controls position="0 1.6 0" />
+
+          {/* Reticle — only moves, never "holds" placed objects */}
           <a-entity
             id="reticle"
-            ref={reticleRef}
             geometry="primitive: ring; radiusInner: 0.04; radiusOuter: 0.05"
-            material="color: #59f2c7; shader: flat; opacity: 0.8"
+            material="color: #59f2c7; shader: flat; opacity: 0.85"
             visible="false"
             rotation="-90 0 0"
           >
             <a-entity
-              geometry="primitive: circle; radius: 0.005"
+              geometry="primitive: circle; radius: 0.006"
               material="color: #59f2c7; shader: flat"
             />
           </a-entity>
         </a-scene>
-      ) : null}
+      )}
 
+      {/* ── DOM Overlay (always on top of the AR camera) ── */}
       <div id="ar-overlay" className="ar-overlay-container">
+        {/* Status pill */}
         <div className="status-pill">{status}</div>
 
+        {/* Debug log */}
         <div className="debug-panel">
           <strong style={{ display: 'block', marginBottom: 6 }}>WebXR Debug</strong>
-          {debugMessages.length === 0 ? <div>Waiting for checks...</div> : null}
-          {debugMessages.map((message, index) => (
-            <div key={`${message}-${index}`}>• {message}</div>
-          ))}
+          {logs.length === 0 && <div>Waiting…</div>}
+          {logs.map((m, i) => <div key={i}>• {m}</div>)}
         </div>
 
+        {/* Enter AR (hidden once session is live) */}
         <div className="top-controls">
-          {!isARActive && (
-            <button type="button" className="primary-btn" onClick={handleEnterAR}>
+          {!arActive && (
+            <button type="button" className="primary-btn" onClick={enterAR}>
               Enter AR
             </button>
           )}
         </div>
 
+        {/* Bottom toolbar */}
         <div className="bottom-ar-ui">
           <div className="create-post-label">
-            <div className="status-pill" style={{position:'static', marginBottom: '10px'}}>{draftPost.type === 'emoji' ? `Placing: ${draftPost.content}` : 'Placing text'}</div>
-            {isARActive && (
-              <button 
-                className="primary-btn pulse-glow" 
-                onClick={handleManualPlacement}
-                style={{marginBottom: '10px', width: '100%', borderRadius: '12px'}}
+            <div className="status-pill" style={{ position: 'static', marginBottom: 10 }}>
+              {draft.type === 'emoji' ? `Placing: ${draft.content}` : `Placing text`}
+            </div>
+
+            {arActive && (
+              <button
+                className="primary-btn pulse-glow"
+                onClick={onPlaceHere}
+                style={{ marginBottom: 10, width: '100%', borderRadius: 12 }}
               >
                 👇 Place Here
               </button>
             )}
           </div>
+
           <div className="emoji-picker-row">
-            {['😀', '😂', '❤️', '🔥', '🎉'].map((emoji) => (
+            {['😀', '😂', '❤️', '🔥', '🎉'].map((em) => (
               <button
-                key={emoji}
-                className={`emoji-btn ${draftPost.content === emoji ? 'emoji-btn--active' : ''}`}
-                onClick={(e) => { e.stopPropagation(); setDraftPost({ type: 'emoji', content: emoji }); setStatus(`Selected ${emoji}. Tap to place!`); }}
+                key={em}
+                className={`emoji-btn ${draft.content === em ? 'emoji-btn--active' : ''}`}
+                onClick={(e) => { e.stopPropagation(); setDraft({ type: 'emoji', content: em }); setStatus(`Selected ${em}`); }}
               >
-                {emoji}
+                {em}
               </button>
             ))}
             <button
               className="emoji-btn text-btn"
               onClick={(e) => {
                 e.stopPropagation();
-                const text = window.prompt('Enter text message:');
-                if (text) {
-                  setDraftPost({ type: 'text', content: text });
-                  setStatus('Selected text. Tap to place!');
-                }
+                const t = window.prompt('Enter text:');
+                if (t) { setDraft({ type: 'text', content: t }); setStatus('Text selected.'); }
               }}
             >
               ✍️ Text
