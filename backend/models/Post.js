@@ -15,11 +15,24 @@ const postSchema = new mongoose.Schema({
   },
   latitude: {
     type: Number,
-    required: true,
+    required: false,
+    default: 0
   },
   longitude: {
     type: Number,
-    required: true,
+    required: false,
+    default: 0
+  },
+  position: {
+    x: { type: Number, required: true },
+    y: { type: Number, required: true },
+    z: { type: Number, required: true },
+  },
+  rotation: {
+    x: { type: Number, required: true },
+    y: { type: Number, required: true },
+    z: { type: Number, required: true },
+    w: { type: Number, required: true },
   },
   createdAt: {
     type: Date,

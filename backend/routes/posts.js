@@ -5,11 +5,13 @@ const router = Router();
 
 router.post('/create', async (req, res) => {
   try {
-    const { type, content, latitude, longitude } = req.body;
+    const { type, content, latitude, longitude, position, rotation } = req.body;
 
-    if (!type || !content || latitude === undefined || longitude === undefined) {
+    // We no longer require latitude/longitude strictly since they default to 0 for AR mode
+    if (!type || !content || !position || !rotation) {
+      console.warn('[API] Missing required AR anchor fields in /create payload');
       return res.status(400).json({
-        message: 'type, content, latitude, and longitude are required.',
+        message: 'type, content, position, and rotation are required for AR objects.',
       });
     }
 
@@ -18,10 +20,14 @@ router.post('/create', async (req, res) => {
       content,
       latitude,
       longitude,
+      position,
+      rotation,
     });
 
+    console.log(`[API] Successfully saved AR post: ${post._id}`);
     return res.status(201).json({ post });
   } catch (error) {
+    console.error('[API] /create error saving post:', error.message);
     return res.status(500).json({
       message: 'Failed to create post.',
       error: error.message,

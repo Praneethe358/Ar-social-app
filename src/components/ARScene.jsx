@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPost } from '../services/api.js';
+import { createPost, fetchNearbyPosts } from '../services/api.js';
 
 const AFRAME_SRC = 'https://aframe.io/releases/1.4.2/aframe.min.js';
 const MAX_POSTS = 80;
@@ -253,6 +253,30 @@ function ARScene() {
     return text;
   }, []);
 
+  const spawnSavedPost = useCallback((post) => {
+    const sceneEl = sceneRef.current;
+    if (!sceneEl || !post.position) return null;
+
+    const root = document.createElement('a-entity');
+    root.setAttribute('position', `${post.position.x} ${post.position.y} ${post.position.z}`);
+    
+    // Some older posts might not have rotation saved
+    if (post.rotation) {
+      root.object3D.quaternion.set(post.rotation.x, post.rotation.y, post.rotation.z, post.rotation.w);
+    }
+    
+    root.setAttribute('scale', '1 1 1');
+    root.setAttribute('data-post-id', post._id);
+
+    const body = post.type === 'emoji' ? buildEmojiEntity(post.content) : buildTextEntity(post.content);
+    root.appendChild(body);
+
+    sceneEl.appendChild(root);
+    placedEntitiesRef.current.push(root);
+    pruneOldPosts();
+    return root;
+  }, [buildEmojiEntity, buildTextEntity, pruneOldPosts]);
+
   const spawnPost = useCallback(
     (post, hitPose) => {
       const sceneEl = sceneRef.current;
@@ -266,6 +290,7 @@ function ARScene() {
 
       const root = document.createElement('a-entity');
       root.setAttribute('position', `${position.x} ${position.y} ${position.z}`);
+      root.object3D.quaternion.set(hitPose.quaternion.x, hitPose.quaternion.y, hitPose.quaternion.z, hitPose.quaternion.w);
       root.setAttribute('scale', '1 1 1');
       root.setAttribute('data-post-id', `local-${Date.now()}`);
 
@@ -275,9 +300,11 @@ function ARScene() {
       sceneEl.appendChild(root);
       placedEntitiesRef.current.push(root);
       pruneOldPosts();
-      return root;
+      
+      // Return the generated coordinates to the caller to save to DB
+      return { root, position, rotation: hitPose.quaternion };
     },
-    [buildEmojiEntity, buildTextEntity, getOffsetPosition, pruneOldPosts]
+    [buildEmojiEntity, buildTextEntity, pruneOldPosts]
   );
 
   useEffect(() => {
@@ -354,6 +381,27 @@ function ARScene() {
     };
   }, [appendDebug, scriptsReady]);
 
+  // Load nearby posts when scene boots up
+  useEffect(() => {
+    if (!sceneLoaded) return;
+    
+    async function loadInitialPosts() {
+      appendDebug('Fetching nearby AR posts from backend...');
+      try {
+        const posts = await fetchNearbyPosts();
+        if (posts && posts.length > 0) {
+          appendDebug(`Found ${posts.length} prior posts. Submitting to engine...`);
+          posts.forEach((post) => spawnSavedPost(post));
+          setStatus(`Loaded ${posts.length} historical posts.`);
+        }
+      } catch (err) {
+        appendDebug('Failed loading nearby posts.');
+      }
+    }
+    
+    loadInitialPosts();
+  }, [sceneLoaded, appendDebug, spawnSavedPost]);
+
   useEffect(() => {
     if (!scriptsReady || !sceneLoaded || !sceneRef.current) return;
 
@@ -370,7 +418,7 @@ function ARScene() {
         content: draftPost.content,
       };
 
-      const placedEntity = spawnPost(localPost, hitPose);
+      const { root: placedEntity, position, rotation } = spawnPost(localPost, hitPose) || {};
       if (!placedEntity) return;
 
       lastPlacementAtRef.current = now;
@@ -379,16 +427,17 @@ function ARScene() {
       createPost({
         type: localPost.type,
         content: localPost.content,
-        latitude: 0,
-        longitude: 0,
+        position,
+        rotation,
       })
         .then((savedPost) => {
-          if (savedPost?._id) {
+          if (savedPost && savedPost._id) {
             placedEntity.setAttribute('data-post-id', savedPost._id);
           }
-          setStatus('Post saved. Tap another surface point to place more.');
+          setStatus('Post saved successfully!');
         })
-        .catch(() => {
+        .catch((error) => {
+          console.error(error);
           placedEntity.setAttribute('data-post-id', `offline-${Date.now()}`);
           setStatus('Placed locally. API sync failed; object stays in AR scene.');
         });
