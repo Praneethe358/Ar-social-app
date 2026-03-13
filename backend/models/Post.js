@@ -34,6 +34,10 @@ const postSchema = new mongoose.Schema({
     z: { type: Number, required: true },
     w: { type: Number, required: true },
   },
+  timestamp: {
+    type: Date,
+    default: Date.now,
+  },
   createdAt: {
     type: Date,
     default: Date.now,

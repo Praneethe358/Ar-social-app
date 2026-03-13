@@ -3,9 +3,9 @@ import Post from '../models/Post.js';
 
 const router = Router();
 
-router.post('/create', async (req, res) => {
+router.post('/ar-post', async (req, res) => {
   try {
-    const { type, content, latitude, longitude, position, rotation } = req.body;
+    const { type, content, latitude, longitude, position, rotation, timestamp } = req.body;
 
     // We no longer require latitude/longitude strictly since they default to 0 for AR mode
     if (!type || !content || !position || !rotation) {
@@ -22,6 +22,7 @@ router.post('/create', async (req, res) => {
       longitude,
       position,
       rotation,
+      timestamp: timestamp || new Date(),
     });
 
     console.log(`[API] Successfully saved AR post: ${post._id}`);
@@ -35,7 +36,7 @@ router.post('/create', async (req, res) => {
   }
 });
 
-router.get('/nearby', async (_req, res) => {
+router.get('/ar-posts/nearby', async (_req, res) => {
   try {
     const posts = await Post.find().sort({ createdAt: -1 });
     return res.json({ posts });

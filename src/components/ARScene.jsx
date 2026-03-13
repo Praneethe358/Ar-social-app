@@ -38,6 +38,19 @@ function registerWebXRHitTestComponent() {
     return;
   }
 
+  window.AFRAME.registerComponent('always-face-camera', {
+    tick() {
+      const camera = this.el.sceneEl?.camera;
+      if (camera) {
+        const cameraPos = new window.THREE.Vector3();
+        camera.getWorldPosition(cameraPos);
+        // Ensure text is kept upright
+        cameraPos.y = this.el.object3D.position.y;
+        this.el.object3D.lookAt(cameraPos);
+      }
+    }
+  });
+
   window.AFRAME.registerComponent('webxr-hit-test', {
     schema: {
       reticle: { type: 'selector' },
@@ -102,8 +115,9 @@ function registerWebXRHitTestComponent() {
       this.viewerSpace = null;
       this.localSpace = null;
       this.lastHitPose = null;
-      if (this.data.reticle) {
-        this.data.reticle.object3D.visible = false;
+      const reticleEl = document.getElementById('reticle');
+      if (reticleEl) {
+        reticleEl.object3D.visible = false;
       }
     },
 
@@ -115,7 +129,7 @@ function registerWebXRHitTestComponent() {
       }
 
       const results = xrFrame.getHitTestResults(this.hitTestSource);
-      const reticleEl = this.data.reticle;
+      const reticleEl = document.getElementById('reticle');
 
       if (!results.length) {
         if (reticleEl && reticleEl.object3D.visible) {
@@ -141,9 +155,9 @@ function registerWebXRHitTestComponent() {
 
       this.lastHitPose = {
         position: {
-          x: Number(position.x.toFixed(3)),
-          y: Number(position.y.toFixed(3)),
-          z: Number(position.z.toFixed(3)),
+          x: position.x,
+          y: position.y,
+          z: position.z,
         },
         quaternion: {
           x: quaternion.x,
@@ -156,7 +170,7 @@ function registerWebXRHitTestComponent() {
       sceneEl.emit('webxr-hit-test', this.lastHitPose);
       if (reticleEl) {
         if (!reticleEl.object3D.visible) {
-          sceneEl.emit('webxr-hit-status', { message: 'Surface detected! Tap to place.' });
+          sceneEl.emit('webxr-hit-status', { message: 'Surface detected! Tap anywhere to place.' });
         }
         reticleEl.object3D.visible = true;
         reticleEl.object3D.position.copy(position);
@@ -234,25 +248,37 @@ function ARScene() {
     }
   }, []);
 
+  /**
+   * Builds an A-Frame entity for an emoji post.
+   * Uses <a-text> as requested for AR visibility.
+   */
   const buildEmojiEntity = useCallback((content) => {
     const emojiText = document.createElement('a-text');
     emojiText.setAttribute('value', content);
     emojiText.setAttribute('align', 'center');
-    emojiText.setAttribute('scale', '2 2 2');
+    emojiText.setAttribute('scale', '0.5 0.5 0.5'); // Adjusted for realistic AR size
     emojiText.setAttribute('side', 'double');
+    emojiText.setAttribute('always-face-camera', ''); // Custom component to face user
     return emojiText;
   }, []);
 
+  /**
+   * Builds an A-Frame entity for a text post.
+   */
   const buildTextEntity = useCallback((content) => {
     const text = document.createElement('a-text');
     text.setAttribute('value', content);
     text.setAttribute('align', 'center');
     text.setAttribute('color', 'orange');
-    text.setAttribute('scale', '2 2 2');
+    text.setAttribute('scale', '0.5 0.5 0.5'); // Adjusted for realistic AR size
     text.setAttribute('side', 'double');
+    text.setAttribute('always-face-camera', '');
     return text;
   }, []);
 
+  /**
+   * Spawns a post that was retrieved from the backend.
+   */
   const spawnSavedPost = useCallback((post) => {
     const sceneEl = sceneRef.current;
     if (!sceneEl || !post.position) return null;
@@ -260,7 +286,7 @@ function ARScene() {
     const root = document.createElement('a-entity');
     root.setAttribute('position', `${post.position.x} ${post.position.y} ${post.position.z}`);
     
-    // Some older posts might not have rotation saved
+    // Set rotation if available, otherwise it defaults to upright
     if (post.rotation) {
       root.object3D.quaternion.set(post.rotation.x, post.rotation.y, post.rotation.z, post.rotation.w);
     }
@@ -277,6 +303,9 @@ function ARScene() {
     return root;
   }, [buildEmojiEntity, buildTextEntity, pruneOldPosts]);
 
+  /**
+   * Spawns a new post at the current hit-test position (reticle).
+   */
   const spawnPost = useCallback(
     (post, hitPose) => {
       const sceneEl = sceneRef.current;
@@ -301,7 +330,6 @@ function ARScene() {
       placedEntitiesRef.current.push(root);
       pruneOldPosts();
       
-      // Return the generated coordinates to the caller to save to DB
       return { root, position, rotation: hitPose.quaternion };
     },
     [buildEmojiEntity, buildTextEntity, pruneOldPosts]
@@ -429,6 +457,7 @@ function ARScene() {
         content: localPost.content,
         position,
         rotation,
+        timestamp: new Date().toISOString()
       })
         .then((savedPost) => {
           if (savedPost && savedPost._id) {
@@ -455,8 +484,16 @@ function ARScene() {
 
     const handleXRPlaceRequest = (event) => {
       if (!sceneEl.is('ar-mode')) return;
-      if (!event.detail?.position) return;
+      // In AR mode, event.detail is the hitPose
       placePostAtPose(event.detail);
+    };
+
+    const handleSceneClick = (event) => {
+      if (!sceneEl.is('ar-mode')) return;
+      // If we have a valid hit-test result from the most recent tick, use it
+      if (latestHitRef.current && document.getElementById('reticle')?.object3D.visible) {
+        placePostAtPose(latestHitRef.current);
+      }
     };
 
     const handleARStart = () => {
@@ -471,6 +508,7 @@ function ARScene() {
     sceneEl.addEventListener('webxr-hit-test', handleHitPose);
     sceneEl.addEventListener('webxr-hit-status', handleStatus);
     sceneEl.addEventListener('webxr-place-request', handleXRPlaceRequest);
+    sceneEl.addEventListener('click', handleSceneClick);
     sceneEl.addEventListener('enter-vr', handleARStart);
     sceneEl.addEventListener('exit-vr', handleAREnd);
 
@@ -478,6 +516,7 @@ function ARScene() {
       sceneEl.removeEventListener('webxr-hit-test', handleHitPose);
       sceneEl.removeEventListener('webxr-hit-status', handleStatus);
       sceneEl.removeEventListener('webxr-place-request', handleXRPlaceRequest);
+      sceneEl.removeEventListener('click', handleSceneClick);
       sceneEl.removeEventListener('enter-vr', handleARStart);
       sceneEl.removeEventListener('exit-vr', handleAREnd);
     };
@@ -505,24 +544,7 @@ function ARScene() {
     }
   }, [appendDebug, sceneLoaded]);
 
-  const handleManualPlace = useCallback((e) => {
-    e.stopPropagation();
-    const sceneEl = sceneRef.current;
-    
-    if (!sceneEl || !sceneEl.is('ar-mode')) {
-      setStatus('Enter AR mode first.');
-      return;
-    }
 
-    const hitPose = latestHitRef.current;
-    if (!hitPose || !reticleRef.current?.object3D?.visible) {
-      setStatus('No surface detected yet. Move phone slowly to scan a plane.');
-      return;
-    }
-
-    // Forward the current reticle pose to the spawn system
-    sceneEl.emit('webxr-place-request', hitPose);
-  }, []);
 
   return (
     <section className="camera-stage">
@@ -535,16 +557,23 @@ function ARScene() {
           xr-mode-ui="enabled: true"
           webxr="requiredFeatures: hit-test,local-floor; optionalFeatures: dom-overlay; overlayElement: #ar-overlay"
           webxr-hit-test="reticle: #reticle"
+          cursor="rayOrigin: mouse; fuse: false"
+          raycaster="objects: .clickable"
         >
           <a-entity id="xr-camera" camera look-controls position="0 1.6 0" />
           <a-entity
             id="reticle"
             ref={reticleRef}
-            geometry="primitive: ring; radiusInner: 0.02; radiusOuter: 0.03"
-            material="color: green; shader: flat"
+            geometry="primitive: ring; radiusInner: 0.04; radiusOuter: 0.05"
+            material="color: #59f2c7; shader: flat; opacity: 0.8"
             visible="false"
             rotation="-90 0 0"
-          />
+          >
+            <a-entity
+              geometry="primitive: circle; radius: 0.005"
+              material="color: #59f2c7; shader: flat"
+            />
+          </a-entity>
         </a-scene>
       ) : null}
 
@@ -567,9 +596,7 @@ function ARScene() {
 
         <div className="bottom-ar-ui">
           <div className="create-post-label">
-            <button className="primary-btn pulse-glow" onClick={handleManualPlace}>
-              ➕ Create Post
-            </button>
+            <div className="status-pill" style={{position:'static', marginBottom: '10px'}}>{draftPost.type === 'emoji' ? `Placing: ${draftPost.content}` : 'Placing text'}</div>
           </div>
           <div className="emoji-picker-row">
             {['😀', '😂', '❤️', '🔥', '🎉'].map((emoji) => (
