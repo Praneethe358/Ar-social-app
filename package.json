@@ -12,6 +12,7 @@
     "dev:server": "nodemon --watch backend backend/server.js",
     "build": "node ./node_modules/vite/bin/vite.js build",
     "preview": "node ./node_modules/vite/bin/vite.js preview",
+    "start": "node backend/server.js",
     "start:server": "node backend/server.js"
   },
   "dependencies": {
