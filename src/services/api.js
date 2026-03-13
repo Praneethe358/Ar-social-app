@@ -7,11 +7,17 @@ import axios from 'axios';
  *  - Override with VITE_API_URL env var if needed
  */
 function getBaseURL() {
-  // Explicit env override always wins
-  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+  const envUrl = import.meta.env.VITE_API_URL;
+  const isLocalhost = typeof window !== 'undefined' && window.location.hostname === 'localhost';
 
-  // In production, use same origin so we don't hit CORS issues
-  if (typeof window !== 'undefined' && window.location.hostname !== 'localhost') {
+  // Only trust VITE_API_URL if we're actually running on localhost
+  // (prevents a stale localhost URL from being used in production)
+  if (envUrl && (isLocalhost || !envUrl.includes('localhost'))) {
+    return envUrl;
+  }
+
+  // In production, use same origin — avoids all CORS issues
+  if (typeof window !== 'undefined' && !isLocalhost) {
     return `${window.location.origin}/api`;
   }
 
