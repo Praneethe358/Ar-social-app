@@ -51,8 +51,10 @@ function registerWebXRHitTestComponent() {
       this.localSpace = null;
       this.hitTestSource = null;
       this.lastHitPose = null;
+      this.session = null;
       this.onSessionEnd = this.onSessionEnd.bind(this);
       this.onEnterVR = this.onEnterVR.bind(this);
+      this.onXRSelect = this.onXRSelect.bind(this);
       this.el.sceneEl.addEventListener('enter-vr', this.onEnterVR);
     },
 
@@ -75,6 +77,8 @@ function registerWebXRHitTestComponent() {
 
         this.viewerSpace = await session.requestReferenceSpace('viewer');
         this.hitTestSource = await session.requestHitTestSource({ space: this.viewerSpace });
+        this.session = session;
+        this.session.addEventListener('select', this.onXRSelect);
         sceneEl.emit('webxr-hit-status', { message: 'Surface scanning active. Move device slowly.' });
         session.addEventListener('end', this.onSessionEnd, { once: true });
       } catch (_error) {
@@ -82,7 +86,21 @@ function registerWebXRHitTestComponent() {
       }
     },
 
+    onXRSelect() {
+      const sceneEl = this.el.sceneEl;
+      if (!this.lastHitPose) {
+        sceneEl.emit('webxr-hit-status', { message: 'No surface detected yet. Move phone slowly.' });
+        return;
+      }
+
+      sceneEl.emit('webxr-place-request', this.lastHitPose);
+    },
+
     onSessionEnd() {
+      if (this.session) {
+        this.session.removeEventListener('select', this.onXRSelect);
+      }
+      this.session = null;
       this.hitTestSource = null;
       this.viewerSpace = null;
       this.localSpace = null;
@@ -342,6 +360,41 @@ function ARScene() {
 
     const sceneEl = sceneRef.current;
 
+    const placePostAtPose = (hitPose) => {
+      const now = Date.now();
+      if (now - lastPlacementAtRef.current < 220) {
+        return;
+      }
+
+      const localPost = {
+        type: draftPost.type,
+        content: draftPost.content,
+      };
+
+      const placedEntity = spawnPost(localPost, hitPose);
+      if (!placedEntity) return;
+
+      lastPlacementAtRef.current = now;
+
+      setStatus('Placed instantly. Syncing post...');
+      createPost({
+        type: localPost.type,
+        content: localPost.content,
+        latitude: 0,
+        longitude: 0,
+      })
+        .then((savedPost) => {
+          if (savedPost?._id) {
+            placedEntity.setAttribute('data-post-id', savedPost._id);
+          }
+          setStatus('Post saved. Tap another surface point to place more.');
+        })
+        .catch(() => {
+          placedEntity.setAttribute('data-post-id', `offline-${Date.now()}`);
+          setStatus('Placed locally. API sync failed; object stays in AR scene.');
+        });
+    };
+
     const handleHitPose = (event) => {
       latestHitRef.current = event.detail;
     };
@@ -353,11 +406,6 @@ function ARScene() {
     };
 
     const handleTap = () => {
-      const now = Date.now();
-      if (now - lastPlacementAtRef.current < 220) {
-        return;
-      }
-
       if (!sceneEl.is('ar-mode')) {
         setStatus('Enter AR mode first, then tap on a detected surface.');
         return;
@@ -379,33 +427,13 @@ function ARScene() {
         },
       };
 
-      const localPost = {
-        type: draftPost.type,
-        content: draftPost.content,
-      };
+      placePostAtPose(reticlePose);
+    };
 
-      const placedEntity = spawnPost(localPost, reticlePose);
-      if (!placedEntity) return;
-
-      lastPlacementAtRef.current = now;
-
-      setStatus('Placed instantly. Syncing post...');
-      createPost({
-        type: localPost.type,
-        content: localPost.content,
-        latitude: 0,
-        longitude: 0,
-      })
-        .then((savedPost) => {
-          if (savedPost?._id) {
-            placedEntity.setAttribute('data-post-id', savedPost._id);
-          }
-          setStatus('Post saved. Tap another surface point to place more.');
-        })
-        .catch(() => {
-          placedEntity.remove();
-          setStatus('API save failed. Removed local post to keep scene consistent.');
-        });
+    const handleXRPlaceRequest = (event) => {
+      if (!sceneEl.is('ar-mode')) return;
+      if (!event.detail?.position) return;
+      placePostAtPose(event.detail);
     };
 
     const handleARStart = () => {
@@ -419,6 +447,7 @@ function ARScene() {
 
     sceneEl.addEventListener('webxr-hit-test', handleHitPose);
     sceneEl.addEventListener('webxr-hit-status', handleStatus);
+    sceneEl.addEventListener('webxr-place-request', handleXRPlaceRequest);
     sceneEl.addEventListener('click', handleTap);
     sceneEl.addEventListener('touchstart', handleTap, { passive: true });
     sceneEl.addEventListener('enter-vr', handleARStart);
@@ -427,6 +456,7 @@ function ARScene() {
     return () => {
       sceneEl.removeEventListener('webxr-hit-test', handleHitPose);
       sceneEl.removeEventListener('webxr-hit-status', handleStatus);
+      sceneEl.removeEventListener('webxr-place-request', handleXRPlaceRequest);
       sceneEl.removeEventListener('click', handleTap);
       sceneEl.removeEventListener('touchstart', handleTap);
       sceneEl.removeEventListener('enter-vr', handleARStart);
