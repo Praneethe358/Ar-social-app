@@ -1,11 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import CreatePost from './CreatePost.jsx';
 import { createPost } from '../services/api.js';
 
 const AFRAME_SRC = 'https://aframe.io/releases/1.4.2/aframe.min.js';
 const MAX_POSTS = 80;
-
-const EMOJI_CONTENT = ['🔥', '😂', '🍕', '🎉'];
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -176,8 +173,7 @@ function ARScene() {
   const [scriptsReady, setScriptsReady] = useState(false);
   const [sceneLoaded, setSceneLoaded] = useState(false);
   const [status, setStatus] = useState('Loading WebXR AR runtime...');
-  const [isComposerOpen, setIsComposerOpen] = useState(false);
-  const [draftPost, setDraftPost] = useState({ type: 'emoji', content: '🔥' });
+  const [draftPost, setDraftPost] = useState({ type: 'emoji', content: '😀' });
   const [debugMessages, setDebugMessages] = useState([]);
 
   const appendDebug = useCallback((message) => {
@@ -231,10 +227,9 @@ function ARScene() {
 
   const buildEmojiEntity = useCallback((content) => {
     const emojiText = document.createElement('a-text');
-    emojiText.setAttribute('value', EMOJI_CONTENT.includes(content) ? content : '🔥');
+    emojiText.setAttribute('value', content);
     emojiText.setAttribute('align', 'center');
-    emojiText.setAttribute('color', '#FFFFFF');
-    emojiText.setAttribute('width', '1.2');
+    emojiText.setAttribute('scale', '2 2 2');
     emojiText.setAttribute('side', 'double');
     return emojiText;
   }, []);
@@ -243,9 +238,8 @@ function ARScene() {
     const text = document.createElement('a-text');
     text.setAttribute('value', content);
     text.setAttribute('align', 'center');
-    text.setAttribute('color', '#FFFFFF');
-    text.setAttribute('width', '2.4');
-    text.setAttribute('wrap-count', '20');
+    text.setAttribute('color', 'orange');
+    text.setAttribute('scale', '2 2 2');
     text.setAttribute('side', 'double');
     return text;
   }, []);
@@ -486,12 +480,6 @@ function ARScene() {
     }
   }, [appendDebug, sceneLoaded]);
 
-  const handleDraftSubmit = useCallback(({ type, content }) => {
-    setDraftPost({ type, content });
-    setIsComposerOpen(false);
-    setStatus(`Draft updated: ${type === 'emoji' ? 'emoji' : 'text'}. Tap in AR to place.`);
-  }, []);
-
   return (
     <section className="camera-stage">
       {scriptsReady ? (
@@ -501,7 +489,7 @@ function ARScene() {
           renderer="logarithmicDepthBuffer: true;"
           vr-mode-ui="enabled: false"
           xr-mode-ui="enabled: true"
-          webxr="requiredFeatures: hit-test,local-floor; optionalFeatures: dom-overlay"
+          webxr="requiredFeatures: hit-test,local-floor; optionalFeatures: dom-overlay; overlayElement: #ar-overlay"
           webxr-hit-test="reticle: #reticle"
         >
           <a-entity id="xr-camera" camera look-controls position="0 1.6 0" />
@@ -516,30 +504,53 @@ function ARScene() {
         </a-scene>
       ) : null}
 
-      <div className="status-pill">{status}</div>
+      <div id="ar-overlay" className="ar-overlay-container">
+        <div className="status-pill">{status}</div>
 
-      <div className="debug-panel">
-        <strong style={{ display: 'block', marginBottom: 6 }}>WebXR Debug</strong>
-        {debugMessages.length === 0 ? <div>Waiting for checks...</div> : null}
-        {debugMessages.map((message, index) => (
-          <div key={`${message}-${index}`}>• {message}</div>
-        ))}
+        <div className="debug-panel">
+          <strong style={{ display: 'block', marginBottom: 6 }}>WebXR Debug</strong>
+          {debugMessages.length === 0 ? <div>Waiting for checks...</div> : null}
+          {debugMessages.map((message, index) => (
+            <div key={`${message}-${index}`}>• {message}</div>
+          ))}
+        </div>
+
+        <div className="top-controls">
+          <button type="button" className="primary-btn" onClick={handleEnterAR}>
+            Enter AR
+          </button>
+        </div>
+
+        <div className="bottom-ar-ui">
+          <div className="create-post-label">
+            <button className="primary-btn pulse-glow">➕ Create Post</button>
+          </div>
+          <div className="emoji-picker-row">
+            {['😀', '😂', '❤️', '🔥', '🎉'].map((emoji) => (
+              <button
+                key={emoji}
+                className={`emoji-btn ${draftPost.content === emoji ? 'emoji-btn--active' : ''}`}
+                onClick={(e) => { e.stopPropagation(); setDraftPost({ type: 'emoji', content: emoji }); setStatus(`Selected ${emoji}. Tap to place!`); }}
+              >
+                {emoji}
+              </button>
+            ))}
+            <button
+              className="emoji-btn text-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                const text = window.prompt('Enter text message:');
+                if (text) {
+                  setDraftPost({ type: 'text', content: text });
+                  setStatus('Selected text. Tap to place!');
+                }
+              }}
+            >
+              ✍️ Text
+            </button>
+          </div>
+        </div>
       </div>
-
-      <div className="top-controls">
-        <button type="button" className="primary-btn" onClick={handleEnterAR}>
-          Enter AR
-        </button>
-        <button type="button" className="primary-btn" onClick={() => setIsComposerOpen(true)}>
-          Edit Post Draft
-        </button>
-      </div>
-
-      <CreatePost
-        isOpen={isComposerOpen}
-        onCancel={() => setIsComposerOpen(false)}
-        onSubmit={handleDraftSubmit}
-      />
     </section>
   );
 }
