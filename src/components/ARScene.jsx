@@ -107,8 +107,9 @@ function registerWebXRHitTestComponent() {
       }
     },
 
-    tick(_time, _delta, xrFrame) {
+    tick() {
       const sceneEl = this.el.sceneEl;
+      const xrFrame = sceneEl.frame;
       if (!sceneEl.is('ar-mode') || !xrFrame || !this.hitTestSource || !this.localSpace) {
         return;
       }
@@ -126,7 +127,9 @@ function registerWebXRHitTestComponent() {
 
       const pose = results[0].getPose(this.localSpace);
       if (!pose) {
-        if (reticleEl) reticleEl.object3D.visible = false;
+        if (reticleEl && reticleEl.object3D.visible) {
+          reticleEl.object3D.visible = false;
+        }
         return;
       }
 
@@ -152,6 +155,9 @@ function registerWebXRHitTestComponent() {
 
       sceneEl.emit('webxr-hit-test', this.lastHitPose);
       if (reticleEl) {
+        if (!reticleEl.object3D.visible) {
+          sceneEl.emit('webxr-hit-status', { message: 'Surface detected! Tap to place.' });
+        }
         reticleEl.object3D.visible = true;
         reticleEl.object3D.position.copy(position);
         reticleEl.object3D.quaternion.copy(quaternion);
@@ -398,31 +404,6 @@ function ARScene() {
       }
     };
 
-    const handleTap = () => {
-      if (!sceneEl.is('ar-mode')) {
-        setStatus('Enter AR mode first, then tap on a detected surface.');
-        return;
-      }
-
-      const reticleObject = reticleRef.current?.object3D;
-      const hitPose = latestHitRef.current;
-
-      if (!reticleObject?.visible || !hitPose) {
-        setStatus('No surface detected yet. Move phone slowly to scan a plane.');
-        return;
-      }
-
-      const reticlePose = {
-        position: {
-          x: hitPose.position.x,
-          y: hitPose.position.y,
-          z: hitPose.position.z,
-        },
-      };
-
-      placePostAtPose(reticlePose);
-    };
-
     const handleXRPlaceRequest = (event) => {
       if (!sceneEl.is('ar-mode')) return;
       if (!event.detail?.position) return;
@@ -430,7 +411,7 @@ function ARScene() {
     };
 
     const handleARStart = () => {
-      setStatus('AR started. Scan a surface and tap to place.');
+      setStatus('AR started. Move device slowly to scan surface.');
     };
 
     const handleAREnd = () => {
@@ -441,8 +422,6 @@ function ARScene() {
     sceneEl.addEventListener('webxr-hit-test', handleHitPose);
     sceneEl.addEventListener('webxr-hit-status', handleStatus);
     sceneEl.addEventListener('webxr-place-request', handleXRPlaceRequest);
-    sceneEl.addEventListener('click', handleTap);
-    sceneEl.addEventListener('touchstart', handleTap, { passive: true });
     sceneEl.addEventListener('enter-vr', handleARStart);
     sceneEl.addEventListener('exit-vr', handleAREnd);
 
@@ -450,8 +429,6 @@ function ARScene() {
       sceneEl.removeEventListener('webxr-hit-test', handleHitPose);
       sceneEl.removeEventListener('webxr-hit-status', handleStatus);
       sceneEl.removeEventListener('webxr-place-request', handleXRPlaceRequest);
-      sceneEl.removeEventListener('click', handleTap);
-      sceneEl.removeEventListener('touchstart', handleTap);
       sceneEl.removeEventListener('enter-vr', handleARStart);
       sceneEl.removeEventListener('exit-vr', handleAREnd);
     };
