@@ -462,48 +462,48 @@ function ARScene() {
     loadInitialPosts();
   }, [sceneLoaded, appendDebug, spawnSavedPost]);
 
+  const placePostAtPose = useCallback((hitPose) => {
+    appendDebug(`placePostAtPose triggered. Pose: ${JSON.stringify(hitPose.position)}`);
+    const now = Date.now();
+    if (now - lastPlacementAtRef.current < 450) { // Slight throttle increase
+      return;
+    }
+
+    const localPost = {
+      type: draftPost.type,
+      content: draftPost.content,
+    };
+
+    const { root: placedEntity, position, rotation } = spawnPost(localPost, hitPose) || {};
+    if (!placedEntity) return;
+
+    lastPlacementAtRef.current = now;
+
+    setStatus('Placed instantly. Syncing post...');
+    createPost({
+      type: localPost.type,
+      content: localPost.content,
+      position,
+      rotation,
+      timestamp: new Date().toISOString()
+    })
+      .then((savedPost) => {
+        if (savedPost && savedPost._id) {
+          placedEntity.setAttribute('data-post-id', savedPost._id);
+        }
+        setStatus('Post saved successfully!');
+      })
+      .catch((error) => {
+        console.error(error);
+        placedEntity.setAttribute('data-post-id', `offline-${Date.now()}`);
+        setStatus('Placed locally. API sync failed; object stays in AR scene.');
+      });
+  }, [draftPost.type, draftPost.content, spawnPost, appendDebug]);
+
   useEffect(() => {
     if (!scriptsReady || !sceneLoaded || !sceneRef.current) return;
 
     const sceneEl = sceneRef.current;
-
-    const placePostAtPose = (hitPose) => {
-      appendDebug(`placePostAtPose triggered. Pose: ${JSON.stringify(hitPose.position)}`);
-      const now = Date.now();
-      if (now - lastPlacementAtRef.current < 450) { // Slight throttle increase
-        return;
-      }
-
-      const localPost = {
-        type: draftPost.type,
-        content: draftPost.content,
-      };
-
-      const { root: placedEntity, position, rotation } = spawnPost(localPost, hitPose) || {};
-      if (!placedEntity) return;
-
-      lastPlacementAtRef.current = now;
-
-      setStatus('Placed instantly. Syncing post...');
-      createPost({
-        type: localPost.type,
-        content: localPost.content,
-        position,
-        rotation,
-        timestamp: new Date().toISOString()
-      })
-        .then((savedPost) => {
-          if (savedPost && savedPost._id) {
-            placedEntity.setAttribute('data-post-id', savedPost._id);
-          }
-          setStatus('Post saved successfully!');
-        })
-        .catch((error) => {
-          console.error(error);
-          placedEntity.setAttribute('data-post-id', `offline-${Date.now()}`);
-          setStatus('Placed locally. API sync failed; object stays in AR scene.');
-        });
-    };
 
     const handleHitPose = (event) => {
       latestHitRef.current = event.detail;
@@ -572,7 +572,7 @@ function ARScene() {
       sceneEl.removeEventListener('enter-vr', handleARStart);
       sceneEl.removeEventListener('exit-vr', handleAREnd);
     };
-  }, [draftPost, sceneLoaded, scriptsReady, spawnPost]);
+  }, [placePostAtPose, sceneLoaded, scriptsReady]);
 
   const handleEnterAR = useCallback(async () => {
     const sceneEl = sceneRef.current;
