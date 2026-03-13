@@ -33,7 +33,7 @@ async function fetchWithRetry(requestFn, maxRetries = 3, delayMs = 1500) {
 
 export async function createPost(payload) {
   try {
-    const response = await fetchWithRetry(() => api.post('/ar-post', payload));
+    const response = await fetchWithRetry(() => api.post('/ar-posts', payload));
     console.log('[API] createPost success:', response.data.post);
     return response.data.post;
   } catch (error) {
@@ -44,7 +44,7 @@ export async function createPost(payload) {
 
 export async function fetchNearbyPosts() {
   try {
-    const response = await api.get('/ar-posts/nearby');
+    const response = await api.get('/ar-posts');
     return response.data.posts || [];
   } catch (error) {
     console.error('[API] fetchNearbyPosts error:', error.response?.data || error.message);

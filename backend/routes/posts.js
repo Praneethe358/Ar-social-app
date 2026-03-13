@@ -3,7 +3,7 @@ import Post from '../models/Post.js';
 
 const router = Router();
 
-router.post('/ar-post', async (req, res) => {
+router.post('/', async (req, res) => {
   try {
     const { type, content, latitude, longitude, position, rotation, timestamp } = req.body;
 
@@ -36,7 +36,7 @@ router.post('/ar-post', async (req, res) => {
   }
 });
 
-router.get('/ar-posts/nearby', async (_req, res) => {
+router.get('/', async (_req, res) => {
   try {
     const posts = await Post.find().sort({ createdAt: -1 });
     return res.json({ posts });

@@ -14,7 +14,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'ar-social-api' });
 });
 
-app.use('/api', postsRouter);
+app.use('/api/ar-posts', postsRouter);
 
 async function startServer() {
   try {
