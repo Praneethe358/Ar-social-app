@@ -58,7 +58,8 @@ function registerStabilityComponents() {
 export default function ARScene() {
   const sceneRef = useRef(null);
   const latestHitRef = useRef(null);
-  const lastPlaceTime = useRef(0); // For debouncing
+  const lastPlaceTime = useRef(0); 
+  const lockedHeading = useRef(0); // Lock heading at session start
 
   const [ready, setReady] = useState(false);
   const [arActive, setArActive] = useState(false);
@@ -161,9 +162,14 @@ export default function ARScene() {
 
     if (scene.hasLoaded) initScene();
     else scene.addEventListener('loaded', initScene, { once: true });
-    scene.addEventListener('enter-vr', () => setArActive(true));
+    scene.addEventListener('enter-vr', () => {
+      setArActive(true);
+      // LOCK HEADING: Capture current compass value to fix the coordinate system
+      lockedHeading.current = heading;
+      console.log(`[Day-3] AR Started - Heading Locked: ${heading.toFixed(1)}°`);
+    });
     scene.addEventListener('exit-vr', () => setArActive(false));
-  }, [ready, userLoc]);
+  }, [ready, userLoc, heading]);
 
   function addARObject(post, sceneEl) {
     const id = post._id || `temp-${Math.random()}`;
@@ -172,14 +178,14 @@ export default function ARScene() {
     const wrapper = document.createElement('a-entity');
     wrapper.setAttribute('id', `post-${id}`);
     
-    // Position anchoring logic: Apply COMPASS-STABLE GPS offset
+    // Position anchoring logic: Apply COMPASS-STABLE GPS offset using the LOCKED heading
     const pos = post.lat && post.lng && post._id
-      ? calculateGPSOffset(userLoc.lat, userLoc.lng, post.lat, post.lng, { x: post.x, y: post.y, z: post.z }, heading)
+      ? calculateGPSOffset(userLoc.lat, userLoc.lng, post.lat, post.lng, { x: post.x, y: post.y, z: post.z }, lockedHeading.current)
       : { x: post.x, y: post.y, z: post.z };
 
     wrapper.setAttribute("position", { x: pos.x, y: pos.y + 0.1, z: pos.z });
     wrapper.setAttribute('billboard', '');
-    wrapper.setAttribute('float', 'speed: 1.5; height: 0.04');
+    wrapper.setAttribute('float', 'speed: 0.8; height: 0.04');
 
     const img = document.createElement('a-image');
     img.setAttribute('src', emojiToDataURL(post.emoji));
