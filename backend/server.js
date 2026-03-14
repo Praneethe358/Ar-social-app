@@ -20,7 +20,7 @@ app.get('/api/health', (_req, res) => {
   res.json({ ok: true, service: 'ar-social-api' });
 });
 
-app.use('/api/ar-posts', postsRouter);
+app.use('/api/posts', postsRouter);
 
 /* ── Serve Vite build in production ── */
 const distPath = path.join(__dirname, '..', 'dist');
