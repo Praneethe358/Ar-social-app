@@ -22,7 +22,11 @@ export function getGPSLocation() {
     
     // 1. GPS LOCATION: GET CURRENT POS
     navigator.geolocation.getCurrentPosition(
-      pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      pos => resolve({ 
+        lat: pos.coords.latitude, 
+        lng: pos.coords.longitude,
+        accuracy: pos.coords.accuracy 
+      }),
       err => reject(err.message),
       { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
     );
@@ -30,25 +34,31 @@ export function getGPSLocation() {
 }
 
 /**
- * calculateGPSOffset(userLoc, postLoc, localPos)
- * Translates the difference in GPS into a meter offset in AR space.
- * This ensures that if you start your AR session in a different spot,
- * the emoji stays physically in the same place.
+ * calculateGPSOffset(userLat, userLng, postLat, postLng, originalPos, initialHeading)
+ * Translates GPS difference into a COMPASS-ALIGNED meter offset.
  */
-export function calculateGPSOffset(userLat, userLng, postLat, postLng, originalPos) {
-  // Approximate meters per degree formulas
+export function calculateGPSOffset(userLat, userLng, postLat, postLng, originalPos, headingDeg = 0) {
   const metersPerLat = 111111;
   const metersPerLon = 111111 * Math.cos((userLat * Math.PI) / 180);
 
+  // Raw physical distance from user to post's origin GPS
   const dx = (postLng - userLng) * metersPerLon;
   const dz = (postLat - userLat) * metersPerLat;
 
-  // In A-Frame/WebXR:
-  // +X is Right (East), -Z is Forward (North)
+  // Convert Heading to Radians (Heading is degrees clockwise from North)
+  const rad = (headingDeg * Math.PI) / 180;
+  
+  // Rotate the (dx, dz) vector by the negative heading to align with AR space
+  // A-Frame: -Z is North if heading=0. 
+  // If user faces East (90), we rotate everything -90 deg.
+  const rotatedX = dx * Math.cos(rad) - dz * Math.sin(rad);
+  const rotatedZ = dx * Math.sin(rad) + dz * Math.cos(rad);
+
   return {
-    x: originalPos.x + dx,
+    x: originalPos.x + rotatedX,
     y: originalPos.y, 
-    z: originalPos.z - dz // dz is North, North is -Z
+    z: originalPos.z - rotatedZ // North is -Z
   };
 }
+
 

@@ -64,11 +64,22 @@ export default function ARScene() {
   const [arActive, setArActive] = useState(false);
   const [status, setStatus] = useState('Initializing GPS…');
   const [userLoc, setUserLoc] = useState(null);
+  const [heading, setHeading] = useState(0); // Compass orientation
   const [nearbyCount, setNearbyCount] = useState(0);
   const [draftEmoji, setDraftEmoji] = useState('🔥');
 
   useEffect(() => {
     let alive = true;
+
+    // Detect compass heading
+    const handleOrient = (e) => {
+      let h = e.alpha;
+      if (e.absolute === false && e.webkitCompassHeading) h = e.webkitCompassHeading;
+      if (h !== null && alive) setHeading(h);
+    };
+    window.addEventListener('deviceorientationabsolute', handleOrient, true);
+    window.addEventListener('deviceorientation', handleOrient, true);
+
     (async () => {
       try {
         const loc = await getGPSLocation();
@@ -95,8 +106,6 @@ export default function ARScene() {
                 this.localSpace = await session.requestReferenceSpace('local-floor');
                 this.viewerSpace = await session.requestReferenceSpace('viewer');
                 this.hitTestSource = await session.requestHitTestSource({ space: this.viewerSpace });
-                
-                // Note: select listener removed to avoid double placement with HTML buttons
               });
             },
             tick() {
@@ -124,7 +133,12 @@ export default function ARScene() {
         setStatus('Ready — Enter AR');
       } catch (err) { setStatus(`Error: ${err}`); }
     })();
-    return () => { alive = false; };
+
+    return () => { 
+      alive = false; 
+      window.removeEventListener('deviceorientationabsolute', handleOrient);
+      window.removeEventListener('deviceorientation', handleOrient);
+    };
   }, []);
 
   useEffect(() => {
@@ -136,6 +150,8 @@ export default function ARScene() {
         if (!Array.isArray(posts)) return;
         const nearby = posts.filter(p => {
           if (!p.lat || !p.lng) return false;
+          // Filter "ghost" data that has invalid world coordinates
+          if (typeof p.x !== 'number' || Math.abs(p.x) > 500) return false;
           return haversineDistance(userLoc.lat, userLoc.lng, p.lat, p.lng) <= 50;
         });
         setNearbyCount(nearby.length);
@@ -156,9 +172,9 @@ export default function ARScene() {
     const wrapper = document.createElement('a-entity');
     wrapper.setAttribute('id', `post-${id}`);
     
-    // Position anchoring logic: Apply GPS offset so objects stay in absolute world space
+    // Position anchoring logic: Apply COMPASS-STABLE GPS offset
     const pos = post.lat && post.lng && post._id
-      ? calculateGPSOffset(userLoc.lat, userLoc.lng, post.lat, post.lng, { x: post.x, y: post.y, z: post.z })
+      ? calculateGPSOffset(userLoc.lat, userLoc.lng, post.lat, post.lng, { x: post.x, y: post.y, z: post.z }, heading)
       : { x: post.x, y: post.y, z: post.z };
 
     wrapper.setAttribute("position", { x: pos.x, y: pos.y + 0.1, z: pos.z });
@@ -247,6 +263,11 @@ export default function ARScene() {
         {/* 9. NEARBY POSTS UI */}
         <div className="nearby-counter">
           🔥 {nearbyCount} AR posts nearby
+          {userLoc?.accuracy && (
+            <div style={{ fontSize: '10px', opacity: 0.7, marginTop: '4px' }}>
+              GPS Accuracy: {userLoc.accuracy.toFixed(1)}m
+            </div>
+          )}
         </div>
 
         {/* Status indicator */}
