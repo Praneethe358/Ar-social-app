@@ -1,6 +1,7 @@
-const express = require('express');
+import express from 'express';
+import Post from '../models/Post.js'; // Extension is required for ES Modules
+
 const router = express.Router();
-const Post = require('../models/Post');
 
 // GET /api/posts → Return all AR posts
 router.get('/', async (req, res) => {
@@ -37,4 +38,4 @@ router.post('/', async (req, res) => {
   }
 });
 
-module.exports = router;
+export default router;
