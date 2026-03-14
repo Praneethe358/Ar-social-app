@@ -330,14 +330,22 @@ export default function ARScene() {
     return () => { alive = false; };
   }, [log]);
 
-  /* 2. Wait for scene */
+  /* 2. Wait for scene to instantiate and load */
   useEffect(() => {
-    if (!ready || !sceneRef.current) return;
-    const s = sceneRef.current;
-    const done = () => { setSceneLoaded(true); log('A-Frame scene ready.'); };
-    if (s.hasLoaded || s.renderStarted) { done(); return; }
-    s.addEventListener('loaded', done, { once: true });
-    return () => s.removeEventListener('loaded', done);
+    if (!ready) return;
+    const checkInterval = setInterval(() => {
+      const s = sceneRef.current;
+      if (s) {
+        clearInterval(checkInterval);
+        const done = () => { setSceneLoaded(true); log('A-Frame scene ready.'); };
+        if (s.hasLoaded || s.renderStarted) {
+          done();
+        } else {
+          s.addEventListener('loaded', done, { once: true });
+        }
+      }
+    }, 150);
+    return () => clearInterval(checkInterval);
   }, [ready, log]);
 
   /* 3. Load location-filtered posts */
@@ -423,15 +431,22 @@ export default function ARScene() {
 
   const enterAR = useCallback(async () => {
     const s = sceneRef.current;
-    if (!s || !sceneLoaded) { setStatus('Scene not ready yet.'); return; }
+    // Removed strict sceneLoaded check here — if s exists, a-frame will enqueue the request
+    if (!s) { setStatus('Scene element not found.'); return; }
     try {
       log('Requesting immersive-ar session…');
-      await s.enterAR();
+      if (s.enterAR) {
+        await s.enterAR();
+      } else if (s.enterVR) {
+        await s.enterVR(); // Fallback for some A-Frame setups
+      } else {
+        setStatus('AR not supported by this browser setup.');
+      }
     } catch (err) {
       log(`enterAR error: ${err.message}`);
       setStatus('Failed to start AR. Check camera permissions.');
     }
-  }, [sceneLoaded, log]);
+  }, [log]);
 
   const handleTextSubmit = () => {
     if (!textInput.trim()) return;
