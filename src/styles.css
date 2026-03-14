@@ -137,21 +137,22 @@ a-scene,
 .nearby-counter {
   position: absolute;
   top: 120px;
-  background: rgba(255, 61, 202, 0.15);
-  border: 1px solid rgba(255, 61, 202, 0.4);
-  color: #ff3dca;
-  padding: 0.4rem 1.1rem;
-  border-radius: var(--radius-pill);
+  background: rgba(8, 18, 32, 0.72);
+  border: 1px solid var(--glass-border);
+  color: var(--text);
+  padding: 0.6rem 1.2rem;
+  border-radius: var(--radius-md);
   font-size: 0.85rem;
   font-weight: 700;
   backdrop-filter: var(--blur-sm);
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  box-shadow: 0 4px 15px rgba(255, 61, 202, 0.2);
+  flex-direction: column;
+  gap: 0.2rem;
+  box-shadow: var(--shadow-md);
   pointer-events: none;
   z-index: 12;
-  animation: slide-down 0.5s ease-out;
+  animation: slide-down 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  transition: opacity 0.3s, transform 0.3s;
 }
 
 @keyframes slide-down {
@@ -159,9 +160,62 @@ a-scene,
   to   { transform: translateY(0); opacity: 1; }
 }
 
-.counter-icon {
-  font-size: 1rem;
-  filter: drop-shadow(0 0 4px rgba(255, 61, 202, 0.6));
+/* ────────────────────────────────────────────
+   Post Info Popup (Tap Emoji)
+   ──────────────────────────────────────────── */
+.post-info-popup {
+  position: absolute;
+  top: 180px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  width: min(280px, 85vw);
+  background: var(--glass);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-lg);
+  backdrop-filter: var(--blur);
+  padding: 1.2rem;
+  pointer-events: auto;
+  animation: pop-up 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+}
+
+@keyframes pop-up {
+  from { transform: translate(-50%, 20px) scale(0.9); opacity: 0; }
+  to   { transform: translate(-50%, 0) scale(1); opacity: 1; }
+}
+
+.info-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.8rem;
+}
+
+.info-emoji {
+  font-size: 2.2rem;
+  filter: drop-shadow(0 0 8px var(--accent-glow));
+}
+
+.close-info {
+  width: 28px; height: 28px;
+  background: rgba(255,255,255,0.1);
+  border-radius: 50%;
+  color: var(--text);
+  font-size: 0.8rem;
+  display: grid; place-content: center;
+}
+
+.info-body {
+  font-size: 0.9rem;
+  color: var(--text);
+  line-height: 1.6;
+}
+
+.info-body p {
+  background: rgba(255,255,255,0.04);
+  padding: 0.4rem 0.8rem;
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.4rem;
 }
 
 

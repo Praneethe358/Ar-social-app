@@ -6,6 +6,8 @@ import { getGPSLocation, haversineDistance, calculateGPSOffset } from '../utils/
 const AFRAME_CDN = 'https://aframe.io/releases/1.4.2/aframe.min.js';
 const ENV_CDN = 'https://unpkg.com/aframe-environment-component@1.3.1/dist/aframe-environment-component.min.js';
 
+const EMOJI_SCALE = 0.3;
+
 /* ─────────────────────────────────────────
    Canvas helper for rendering Emojis
    ───────────────────────────────────────── */
@@ -44,11 +46,24 @@ function registerStabilityComponents() {
   // Float animation: subtle movement
   if (!window.AFRAME.components['float']) {
     window.AFRAME.registerComponent('float', {
-      schema: { speed: { default: 1 }, height: { default: 0.05 } },
+      schema: { speed: { default: 1 }, height: { default: 0.1 } },
       init() { this.baseY = this.el.object3D.position.y; this.time = 0; },
       tick(t, dt) {
         this.time += dt * 0.001 * this.data.speed;
         this.el.object3D.position.y = this.baseY + Math.sin(this.time) * this.data.height;
+      }
+    });
+  }
+
+  // Click handler component
+  if (!window.AFRAME.components['emoji-click']) {
+    window.AFRAME.registerComponent('emoji-click', {
+      schema: { postData: { type: 'string' } },
+      init() {
+        this.el.addEventListener('click', () => {
+          const data = JSON.parse(this.data.postData);
+          this.el.sceneEl.emit('post-selected', { post: data });
+        });
       }
     });
   }
@@ -62,15 +77,17 @@ export default function ARScene() {
   const socketRef = useRef(null);
   const latestHitRef = useRef(null);
   const lastPlaceTime = useRef(0); 
-  const lockedHeading = useRef(0); // Lock heading at session start
+  const lockedHeading = useRef(0);
+  const existingPostIds = useRef(new Set()); // Duplicate protection
 
   const [ready, setReady] = useState(false);
   const [arActive, setArActive] = useState(false);
   const [status, setStatus] = useState('Initializing GPS…');
   const [userLoc, setUserLoc] = useState(null);
-  const [heading, setHeading] = useState(0); // Compass orientation
+  const [heading, setHeading] = useState(0); 
   const [nearbyCount, setNearbyCount] = useState(0);
   const [draftEmoji, setDraftEmoji] = useState('🔥');
+  const [selectedPost, setSelectedPost] = useState(null);
 
   useEffect(() => {
     let alive = true;
@@ -167,8 +184,7 @@ export default function ARScene() {
       socketRef.current.emit('join-zone', { lat: userLoc.lat, lng: userLoc.lng });
       socketRef.current.on('new-post', (post) => {
         console.log('[Socket] New real-time emoji received:', post.emoji);
-        addARObject(post, scene);
-        setNearbyCount(prev => prev + 1);
+        spawnEmoji(post, scene);
       });
     }
 
@@ -177,9 +193,19 @@ export default function ARScene() {
       fetchNearbyPosts(userLoc.lat, userLoc.lng).then(posts => {
         if (!Array.isArray(posts)) return;
         setNearbyCount(posts.length);
-        posts.forEach(p => addARObject(p, scene));
+        posts.forEach(p => spawnEmoji(p, scene));
       });
     };
+
+    const handlePostSelected = (e) => {
+      const post = e.detail.post;
+      // Calculate real-time distance
+      if (userLoc) {
+        post.currentDistance = haversineDistance(userLoc.lat, userLoc.lng, post.lat, post.lng);
+      }
+      setSelectedPost(post);
+    };
+    scene.addEventListener('post-selected', handlePostSelected);
 
     if (scene.hasLoaded) initScene();
     else scene.addEventListener('loaded', initScene, { once: true });
@@ -193,44 +219,82 @@ export default function ARScene() {
 
     return () => {
       if (socketRef.current) socketRef.current.off('new-post');
+      scene.removeEventListener('post-selected', handlePostSelected);
     }
   }, [ready, userLoc, heading]);
 
-  function addARObject(post, sceneEl) {
+  function spawnEmoji(post, sceneEl) {
     const isTemp = !post._id;
     const id = post._id || `temp-${Math.random()}`;
+    
+    // Duplicate Protection
+    if (existingPostIds.current.has(id)) return;
     if (document.getElementById(`post-${id}`)) return;
+    existingPostIds.current.add(id);
 
-    // Cleanup: If this is a REAL post, remove any TEMP posts nearby (within 1m)
+    // Cleanup Temporary local version if REAL version arrives
     if (!isTemp) {
       const temps = document.querySelectorAll('[data-temp="true"]');
       temps.forEach(t => {
-        // We use world coordinates for the proximity check
         const dist = Math.hypot(t.object3D.position.x - post.x, t.object3D.position.z - post.z);
-        if (dist < 1) t.parentNode.removeChild(t);
+        if (dist < 1) {
+           t.parentNode.removeChild(t);
+           existingPostIds.current.delete(t.id.replace('post-', ''));
+        }
       });
     }
 
     const wrapper = document.createElement('a-entity');
     wrapper.setAttribute('id', `post-${id}`);
     if (isTemp) wrapper.setAttribute('data-temp', 'true');
+    wrapper.classList.add('raycastable');
     
     // Position anchoring logic: Apply COMPASS-STABLE GPS offset using the LOCKED heading
     const pos = post.lat && post.lng && post._id
       ? calculateGPSOffset(userLoc.lat, userLoc.lng, post.lat, post.lng, { x: post.x, y: post.y, z: post.z }, lockedHeading.current)
       : { x: post.x, y: post.y, z: post.z };
 
+    // Set stable world position with 0.1 offset to avoid clipping
     wrapper.setAttribute("position", { x: pos.x, y: pos.y + 0.1, z: pos.z });
     wrapper.setAttribute('billboard', '');
-    wrapper.setAttribute('float', 'speed: 0.8; height: 0.04');
+    wrapper.setAttribute('float', 'speed: 0.6; height: 0.08');
+    
+    // Scale Spawn Animation
+    wrapper.setAttribute('scale', '0 0 0');
+    wrapper.setAttribute('animation', {
+      property: 'scale',
+      from: '0 0 0',
+      to: `${EMOJI_SCALE} ${EMOJI_SCALE} ${EMOJI_SCALE}`,
+      dur: 400,
+      easing: 'easeOutBack'
+    });
+
+    // Metadata for clicks
+    wrapper.setAttribute('emoji-click', { postData: JSON.stringify(post) });
 
     const img = document.createElement('a-image');
     img.setAttribute('src', emojiToDataURL(post.emoji));
-    img.setAttribute('width', '0.4');
-    img.setAttribute('height', '0.4');
+    img.setAttribute('width', '1');
+    img.setAttribute('height', '1');
+    img.setAttribute('material', 'emissive: #ffffff; emissiveIntensity: 0.2');
     
+    // Add small point light for GLOW effect
+    const glow = document.createElement('a-entity');
+    glow.setAttribute('light', {
+      type: 'point',
+      intensity: 0.5,
+      distance: 2,
+      color: '#ffffff'
+    });
+    glow.setAttribute('position', '0 0 0.1');
+
     wrapper.appendChild(img);
+    wrapper.appendChild(glow);
     sceneEl.appendChild(wrapper);
+
+    // Sync nearby count with unique post IDs
+    setNearbyCount(existingPostIds.current.size);
+
     return wrapper;
   }
 
@@ -245,7 +309,7 @@ export default function ARScene() {
 
     const newPost = { emoji: draftEmoji, x: position.x, y: position.y, z: position.z, lat: userLoc.lat, lng: userLoc.lng };
     const scene = sceneRef.current;
-    if (scene) addARObject(newPost, scene); // Add local temp version immediately
+    if (scene) spawnEmoji(newPost, scene); // Add local temp version immediately
 
     createPost(newPost)
       .then(saved => {
@@ -281,13 +345,24 @@ export default function ARScene() {
           xr-mode-ui="enabled: true"
           webxr="requiredFeatures: hit-test,local-floor; optionalFeatures: dom-overlay; overlayElement: #ar-overlay"
           webxr-hit-test="reticle: #reticle"
+          cursor="rayOrigin: mouse; fuse: false"
+          raycaster="objects: .raycastable"
         >
           {/* Advanced Lighting & Environment */}
           <a-entity light="type: ambient; intensity: 0.6"></a-entity>
           <a-entity light="type: directional; intensity: 0.8; castShadow: true; position: -1 2 1"></a-entity>
           <a-entity environment="preset: contact; ground: none; lighting: none; skyType: none;"></a-entity>
 
-          <a-camera id="xr-camera" position="0 1.6 0"></a-camera>
+          <a-camera id="xr-camera" position="0 1.6 0">
+            <a-entity 
+              cursor="fuse: false; fuseTimeout: 500"
+              position="0 0 -1"
+              geometry="primitive: ring; radiusInner: 0.02; radiusOuter: 0.03"
+              material="color: #3dffca; shader: flat"
+              raycaster="objects: .raycastable"
+              visible={arActive}
+            ></a-entity>
+          </a-camera>
 
           {/* Hit Test Reticle */}
           <a-entity
@@ -320,6 +395,22 @@ export default function ARScene() {
 
         {/* Status indicator */}
         {status && <div className="status-pill">{status}</div>}
+
+        {/* Post Info Popup */}
+        {selectedPost && (
+          <div className="post-info-popup pulse-glow">
+            <div className="info-header">
+              <span className="info-emoji">{selectedPost.emoji}</span>
+              <button className="close-info" onClick={() => setSelectedPost(null)}>✕</button>
+            </div>
+            <div className="info-body">
+              <p>Placed {new Date(selectedPost.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+              {selectedPost.currentDistance && (
+                <p>📍 {selectedPost.currentDistance.toFixed(1)}m away</p>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Controls */}
         {!arActive ? (
