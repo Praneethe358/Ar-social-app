@@ -130,6 +130,12 @@ export default function ARScene() {
                 if (!this.el.sceneEl.is('ar-mode')) return;
                 const session = this.el.sceneEl.renderer?.xr.getSession();
                 if (!session) return;
+                
+                // 1. Enforce stable reference space
+                if (this.el.sceneEl.renderer && this.el.sceneEl.renderer.xr.setReferenceSpaceType) {
+                  this.el.sceneEl.renderer.xr.setReferenceSpaceType('local-floor');
+                }
+
                 this.localSpace = await session.requestReferenceSpace('local-floor');
                 this.viewerSpace = await session.requestReferenceSpace('viewer');
                 this.hitTestSource = await session.requestHitTestSource({ space: this.viewerSpace });
@@ -290,6 +296,17 @@ export default function ARScene() {
 
     wrapper.appendChild(img);
     wrapper.appendChild(glow);
+
+    // 7. Spawn Debug Visualization (Set 'true' to see red anchors at base)
+    const DEBUG_STABILITY = false;
+    if (DEBUG_STABILITY) {
+      const debugSphere = document.createElement('a-sphere');
+      debugSphere.setAttribute('radius', '0.02');
+      debugSphere.setAttribute('color', 'red');
+      debugSphere.setAttribute('position', '0 -0.1 0'); // At the hit point
+      wrapper.appendChild(debugSphere);
+    }
+
     sceneEl.appendChild(wrapper);
 
     // Sync nearby count with unique post IDs
@@ -392,6 +409,13 @@ export default function ARScene() {
             </div>
           )}
         </div>
+
+        {/* 8. GPS Accuracy Warning */}
+        {userLoc?.accuracy > 20 && (
+          <div className="status-pill status-pill--warning" style={{ top: '120px' }}>
+            ⚠️ Move slightly to improve GPS accuracy ({userLoc.accuracy.toFixed(0)}m)
+          </div>
+        )}
 
         {/* Status indicator */}
         {status && <div className="status-pill">{status}</div>}
