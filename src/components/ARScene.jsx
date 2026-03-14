@@ -224,26 +224,6 @@ function addTextToScene(sceneEl, text, pos, id) {
   return wrapper;
 }
 
-/* ─────────────────────────────────────────
-   Persistence helpers
-   ───────────────────────────────────────── */
-async function savePost(content, position, type = 'emoji') {
-  try {
-    const saved = await createPost({
-      type,
-      content,
-      position:  { x: position.x, y: position.y, z: position.z },
-      rotation:  { x: 0, y: 0, z: 0, w: 1 },
-      timestamp: new Date().toISOString(),
-    });
-    console.log('[Save] success', saved?._id);
-    return saved;
-  } catch (err) {
-    console.error('[Save] failed', err.message);
-    return null;
-  }
-}
-
 import { getGPSLocation, haversineDistance, isWithinRadius } from '../utils/geo.js';
 
 /* ─────────────────────────────────────────
