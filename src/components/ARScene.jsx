@@ -244,22 +244,53 @@ async function savePost(content, position, type = 'emoji') {
   }
 }
 
-async function loadPosts(sceneEl, entitiesRef, debugFn) {
-  debugFn('Fetching saved posts…');
+import { getGPSLocation, haversineDistance, isWithinRadius } from '../utils/geo.js';
+
+/* ─────────────────────────────────────────
+   Persistence helpers
+   ───────────────────────────────────────── */
+async function savePost(content, position, userLoc, type = 'emoji') {
   try {
-    const posts = await fetchNearbyPosts();
-    if (!posts?.length) { debugFn('No saved posts found.'); return; }
-    debugFn(`Loading ${posts.length} post(s)…`);
-    posts.forEach((p) => {
+    const saved = await createPost({
+      type,
+      content,
+      latitude:  userLoc.latitude,
+      longitude: userLoc.longitude,
+      position:  { x: position.x, y: position.y, z: position.z },
+      rotation:  { x: 0, y: 0, z: 0, w: 1 },
+      timestamp: new Date().toISOString(),
+    });
+    console.log('[Save] success', saved?._id);
+    return saved;
+  } catch (err) {
+    console.error('[Save] failed', err.message);
+    return null;
+  }
+}
+
+async function loadPosts(sceneEl, entitiesRef, userLoc, setNearbyCount, debugFn) {
+  debugFn('Fetching all posts from server…');
+  try {
+    const allPosts = await fetchNearbyPosts();
+    if (!allPosts?.length) { debugFn('No posts found.'); return; }
+
+    // Filter posts within 50 meters
+    const nearby = allPosts.filter(p => 
+      isWithinRadius(userLoc.latitude, userLoc.longitude, p.latitude, p.longitude, 50)
+    );
+
+    setNearbyCount(nearby.length);
+    debugFn(`Found ${nearby.length} posts within 50m.`);
+
+    nearby.forEach((p) => {
       if (!p.position) return;
       const entity = p.type === 'text'
         ? addTextToScene(sceneEl, p.content, p.position, p._id)
         : addEmojiToScene(sceneEl, p.content, p.position, p._id);
       entitiesRef.current.push(entity);
     });
-    debugFn(`✓ ${posts.length} post(s) restored.`);
   } catch (err) {
-    debugFn('Failed to load saved posts.');
+    debugFn('Failed to load posts.');
     console.error('[Load] error', err);
   }
 }
@@ -276,11 +307,13 @@ export default function ARScene() {
   const [ready, setReady]               = useState(false);
   const [sceneLoaded, setSceneLoaded]   = useState(false);
   const [arActive, setArActive]         = useState(false);
-  const [status, setStatus]             = useState('Loading AR…');
-  const [draft, setDraft]               = useState({ type: 'emoji', content: '😀' });
+  const [status, setStatus]             = useState('Initializing GPS…');
+  const [userLoc, setUserLoc]           = useState(null);
+  const [nearbyCount, setNearbyCount]   = useState(0);
+  const [draft, setDraft]               = useState({ type: 'emoji', content: '🔥' });
   const [logs, setLogs]                 = useState([]);
   const [showDebug, setShowDebug]       = useState(false);
-  const [saveState, setSaveState]       = useState('idle'); // idle | saving | saved | error
+  const [saveState, setSaveState]       = useState('idle');
   const [textInput, setTextInput]       = useState('');
   const [showTextInput, setShowTextInput] = useState(false);
 
@@ -289,21 +322,30 @@ export default function ARScene() {
     setLogs((p) => [...p.slice(-40), msg]);
   }, []);
 
-  /* 1. Boot */
+  /* 1. Boot: GPS + A-Frame */
   useEffect(() => {
     let alive = true;
     (async () => {
-      log('Checking WebXR support…');
-      if (!navigator.xr) { setStatus('WebXR not supported. Use Chrome on Android + HTTPS.'); return; }
-      const ok = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
-      log(`immersive-ar supported: ${ok}`);
-      if (!ok) { setStatus('Immersive AR not supported on this device.'); return; }
-      await loadScript(AFRAME_CDN);
-      registerComponents();
-      if (!alive) return;
-      setReady(true);
-      log('A-Frame loaded & components registered.');
-      setStatus('Tap "Enter AR" to begin.');
+      try {
+        log('Requesting GPS location…');
+        const loc = await getGPSLocation();
+        if (!alive) return;
+        setUserLoc(loc);
+        log(`GPS Fixed: ${loc.latitude.toFixed(4)}, ${loc.longitude.toFixed(4)}`);
+
+        log('Checking WebXR support…');
+        if (!navigator.xr) { setStatus('WebXR not supported.'); return; }
+        const ok = await navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+        if (!ok) { setStatus('AR not supported.'); return; }
+
+        await loadScript(AFRAME_CDN);
+        registerComponents();
+        setReady(true);
+        setStatus('Tap "Enter AR" to begin.');
+      } catch (err) {
+        setStatus(`Error: ${err}`);
+        log(`Init failed: ${err}`);
+      }
     })();
     return () => { alive = false; };
   }, [log]);
@@ -318,11 +360,11 @@ export default function ARScene() {
     return () => s.removeEventListener('loaded', done);
   }, [ready, log]);
 
-  /* 3. Load saved posts */
+  /* 3. Load location-filtered posts */
   useEffect(() => {
-    if (!sceneLoaded || !sceneRef.current) return;
-    loadPosts(sceneRef.current, placedEntitiesRef, log);
-  }, [sceneLoaded, log]);
+    if (!sceneLoaded || !sceneRef.current || !userLoc) return;
+    loadPosts(sceneRef.current, placedEntitiesRef, userLoc, setNearbyCount, log);
+  }, [sceneLoaded, userLoc, log]);
 
   /* 4. Wire A-Frame events */
   useEffect(() => {
@@ -370,12 +412,12 @@ export default function ARScene() {
     }
 
     setSaveState('saving');
-    setStatus('Saving…');
-
-    savePost(draft.content, pos, draft.type).then((saved) => {
+    // Persist to backend with GPS data
+    savePost(draft.content, pos, userLoc, draft.type).then((saved) => {
       if (saved?._id) {
         entity.setAttribute('data-post-id', saved._id);
         setSaveState('saved');
+        setNearbyCount(prev => prev + 1); // Increment counter immediately
         setStatus('Saved ✓');
         log(`Saved post ${saved._id}`);
         setTimeout(() => setSaveState('idle'), 2500);
@@ -473,6 +515,12 @@ export default function ARScene() {
               {showDebug ? '✕' : '🛠'}
             </button>
           </div>
+        </div>
+
+        {/* Nearby Counter (Day-3) */}
+        <div className="nearby-counter">
+          <span className="counter-icon">🔥</span>
+          <span className="counter-text">{nearbyCount} AR posts nearby</span>
         </div>
 
         {/* Debug panel */}

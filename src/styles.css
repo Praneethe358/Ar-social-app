@@ -132,6 +132,40 @@ a-scene,
 .icon-btn:active { transform: scale(0.94); }
 
 /* ────────────────────────────────────────────
+   Nearby Counter Badge (Day-3)
+   ──────────────────────────────────────────── */
+.nearby-counter {
+  position: absolute;
+  top: 120px;
+  background: rgba(255, 61, 202, 0.15);
+  border: 1px solid rgba(255, 61, 202, 0.4);
+  color: #ff3dca;
+  padding: 0.4rem 1.1rem;
+  border-radius: var(--radius-pill);
+  font-size: 0.85rem;
+  font-weight: 700;
+  backdrop-filter: var(--blur-sm);
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  box-shadow: 0 4px 15px rgba(255, 61, 202, 0.2);
+  pointer-events: none;
+  z-index: 12;
+  animation: slide-down 0.5s ease-out;
+}
+
+@keyframes slide-down {
+  from { transform: translateY(-20px); opacity: 0; }
+  to   { transform: translateY(0); opacity: 1; }
+}
+
+.counter-icon {
+  font-size: 1rem;
+  filter: drop-shadow(0 0 4px rgba(255, 61, 202, 0.6));
+}
+
+
+/* ────────────────────────────────────────────
    Status Pill
    ──────────────────────────────────────────── */
 .status-pill {

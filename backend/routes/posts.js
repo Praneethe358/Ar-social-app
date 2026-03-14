@@ -7,11 +7,11 @@ router.post('/', async (req, res) => {
   try {
     const { type, content, latitude, longitude, position, rotation, timestamp } = req.body;
 
-    // We no longer require latitude/longitude strictly since they default to 0 for AR mode
-    if (!type || !content || !position || !rotation) {
-      console.warn('[API] Missing required AR anchor fields in /create payload');
+    // Strict validation for Day-3: GPS coordinates are now REQUIRED
+    if (!type || !content || !position || !rotation || latitude === undefined || longitude === undefined) {
+      console.warn('[API] Missing required fields including GPS coords');
       return res.status(400).json({
-        message: 'type, content, position, and rotation are required for AR objects.',
+        message: 'type, content, position, rotation, latitude, and longitude are required.',
       });
     }
 
@@ -25,14 +25,11 @@ router.post('/', async (req, res) => {
       timestamp: timestamp || new Date(),
     });
 
-    console.log(`[API] Successfully saved AR post: ${post._id}`);
+    console.log(`[API] Saved AR post with GPS: ${latitude}, ${longitude}`);
     return res.status(201).json({ post });
   } catch (error) {
-    console.error('[API] /create error saving post:', error.message);
-    return res.status(500).json({
-      message: 'Failed to create post.',
-      error: error.message,
-    });
+    console.error('[API] /create error:', error.message);
+    return res.status(500).json({ message: 'Failed to create post.', error: error.message });
   }
 });
 
