@@ -1,48 +1,40 @@
-import { Router } from 'express';
-import Post from '../models/Post.js';
+const express = require('express');
+const router = express.Router();
+const Post = require('../models/Post');
 
-const router = Router();
+// GET /api/posts → Return all AR posts
+router.get('/', async (req, res) => {
+  try {
+    const posts = await Post.find().sort({ createdAt: -1 });
+    res.json(posts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
+// POST /api/posts → Save new AR post
 router.post('/', async (req, res) => {
   try {
-    const { type, content, latitude, longitude, position, rotation, timestamp } = req.body;
+    const { emoji, x, y, z, lat, lng } = req.body;
 
-    // Strict validation for Day-3: GPS coordinates are now REQUIRED
-    if (!type || !content || !position || !rotation || latitude === undefined || longitude === undefined) {
-      console.warn('[API] Missing required fields including GPS coords');
-      return res.status(400).json({
-        message: 'type, content, position, rotation, latitude, and longitude are required.',
-      });
+    // Reject if fields are missing
+    if (!emoji || x === undefined || y === undefined || z === undefined || lat === undefined || lng === undefined) {
+      return res.status(400).json({ message: 'Missing required AR or GPS fields.' });
     }
 
     const post = await Post.create({
-      type,
-      content,
-      latitude,
-      longitude,
-      position,
-      rotation,
-      timestamp: timestamp || new Date(),
+      emoji,
+      x,
+      y,
+      z,
+      lat,
+      lng
     });
 
-    console.log(`[API] Saved AR post with GPS: ${latitude}, ${longitude}`);
-    return res.status(201).json({ post });
-  } catch (error) {
-    console.error('[API] /create error:', error.message);
-    return res.status(500).json({ message: 'Failed to create post.', error: error.message });
+    res.status(201).json(post);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
-router.get('/', async (_req, res) => {
-  try {
-    const posts = await Post.find().sort({ createdAt: -1 });
-    return res.json({ posts });
-  } catch (error) {
-    return res.status(500).json({
-      message: 'Failed to load nearby posts.',
-      error: error.message,
-    });
-  }
-});
-
-export default router;
+module.exports = router;
