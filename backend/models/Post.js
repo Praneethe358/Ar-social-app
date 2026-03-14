@@ -7,8 +7,15 @@ const postSchema = new mongoose.Schema({
   z: { type: Number, required: true },
   lat: { type: Number, required: true },
   lng: { type: Number, required: true },
-  createdAt: { type: Date, default: Date.now }
+  location: {
+    type: { type: String, enum: ['Point'], default: 'Point' },
+    coordinates: { type: [Number], required: true } // [lng, lat]
+  },
+  createdAt: { type: Date, default: Date.now, index: true }
 });
+
+// Enable geospatial indexing
+postSchema.index({ location: '2dsphere' });
 
 const Post = mongoose.model('Post', postSchema);
 export default Post;

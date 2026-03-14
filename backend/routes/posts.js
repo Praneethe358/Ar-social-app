@@ -3,10 +3,25 @@ import Post from '../models/Post.js'; // Extension is required for ES Modules
 
 const router = express.Router();
 
-// GET /api/posts → Return all AR posts
+// GET /api/posts → Return AR posts within 50m of user
 router.get('/', async (req, res) => {
   try {
-    const posts = await Post.find().sort({ createdAt: -1 });
+    const { lat, lng } = req.query;
+    
+    // If lat/lng provided, use high-performance geospatial query
+    let query = {};
+    if (lat && lng) {
+      query = {
+        location: {
+          $nearSphere: {
+            $geometry: { type: "Point", coordinates: [parseFloat(lng), parseFloat(lat)] },
+            $maxDistance: 50 // 50 meters
+          }
+        }
+      };
+    }
+
+    const posts = await Post.find(query).limit(100);
     res.json(posts);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -18,22 +33,41 @@ router.post('/', async (req, res) => {
   try {
     const { emoji, x, y, z, lat, lng } = req.body;
 
-    // Reject if fields are missing
-    if (!emoji || x === undefined || y === undefined || z === undefined || lat === undefined || lng === undefined) {
-      return res.status(400).json({ message: 'Missing required AR or GPS fields.' });
+    if (!emoji || x === undefined || lat === undefined) {
+      return res.status(400).json({ message: 'Missing fields.' });
+    }
+
+    // 2. DUPLICATE PROTECTION
+    // Check if same emoji was placed within 1 meter in the last 60 seconds
+    const oneMinuteAgo = new Date(Date.now() - 60000);
+    const existing = await Post.findOne({
+      emoji,
+      createdAt: { $gte: oneMinuteAgo },
+      location: {
+        $nearSphere: {
+          $geometry: { type: "Point", coordinates: [lng, lat] },
+          $maxDistance: 1 // 1 meter
+        }
+      }
+    });
+
+    if (existing) {
+      return res.status(409).json({ message: 'Similar post already exists nearby.' });
     }
 
     const post = await Post.create({
-      emoji,
-      x,
-      y,
-      z,
-      lat,
-      lng
+      emoji, x, y, z, lat, lng,
+      location: { type: 'Point', coordinates: [lng, lat] }
     });
+
+    // 1. BROADCAST TO ZONE ROOM
+    const io = req.app.get('socketio');
+    const zoneId = `zone-${lat.toFixed(1)}-${lng.toFixed(1)}`;
+    io.to(zoneId).emit('new-post', post);
 
     res.status(201).json(post);
   } catch (err) {
+    console.error('[API] Error saving post:', err);
     res.status(500).json({ error: err.message });
   }
 });

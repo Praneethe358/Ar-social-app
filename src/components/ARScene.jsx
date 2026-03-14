@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { io } from 'socket.io-client';
 import { createPost, fetchNearbyPosts } from '../services/api.js';
 import { getGPSLocation, haversineDistance, calculateGPSOffset } from '../utils/geo.js';
 
 const AFRAME_CDN = 'https://aframe.io/releases/1.4.2/aframe.min.js';
+const ENV_CDN = 'https://unpkg.com/aframe-environment-component@1.3.1/dist/aframe-environment-component.min.js';
 
 /* ─────────────────────────────────────────
    Canvas helper for rendering Emojis
@@ -57,6 +59,7 @@ function registerStabilityComponents() {
    ───────────────────────────────────────── */
 export default function ARScene() {
   const sceneRef = useRef(null);
+  const socketRef = useRef(null);
   const latestHitRef = useRef(null);
   const lastPlaceTime = useRef(0); 
   const lockedHeading = useRef(0); // Lock heading at session start
@@ -91,7 +94,13 @@ export default function ARScene() {
           if (window.AFRAME) return resolve();
           const script = document.createElement('script');
           script.src = AFRAME_CDN;
-          script.onload = resolve;
+          script.onload = () => {
+             // Load environment component after A-Frame
+             const envScript = document.createElement('script');
+             envScript.src = ENV_CDN;
+             envScript.onload = resolve;
+             document.head.appendChild(envScript);
+          };
           document.head.appendChild(script);
         });
 
@@ -130,6 +139,12 @@ export default function ARScene() {
             }
           });
         }
+
+        // Initialize Socket.io
+        const socketPath = window.location.hostname === 'localhost' ? 'http://localhost:5000' : window.location.origin;
+        const socket = io(socketPath);
+        socketRef.current = socket;
+
         setReady(true);
         setStatus('Ready — Enter AR');
       } catch (err) { setStatus(`Error: ${err}`); }
@@ -139,6 +154,7 @@ export default function ARScene() {
       alive = false; 
       window.removeEventListener('deviceorientationabsolute', handleOrient);
       window.removeEventListener('deviceorientation', handleOrient);
+      if (socketRef.current) socketRef.current.disconnect();
     };
   }, []);
 
@@ -146,37 +162,58 @@ export default function ARScene() {
     if (!ready || !sceneRef.current || !userLoc) return;
     const scene = sceneRef.current;
     
+    // Join the spatial zone for real-time social updates
+    if (socketRef.current) {
+      socketRef.current.emit('join-zone', { lat: userLoc.lat, lng: userLoc.lng });
+      socketRef.current.on('new-post', (post) => {
+        console.log('[Socket] New real-time emoji received:', post.emoji);
+        addARObject(post, scene);
+        setNearbyCount(prev => prev + 1);
+      });
+    }
+
     const initScene = () => {
-      fetchNearbyPosts().then(posts => {
+      // Fetch high-performance filtered posts from backend
+      fetchNearbyPosts(userLoc.lat, userLoc.lng).then(posts => {
         if (!Array.isArray(posts)) return;
-        const nearby = posts.filter(p => {
-          if (!p.lat || !p.lng) return false;
-          // Filter "ghost" data that has invalid world coordinates
-          if (typeof p.x !== 'number' || Math.abs(p.x) > 500) return false;
-          return haversineDistance(userLoc.lat, userLoc.lng, p.lat, p.lng) <= 50;
-        });
-        setNearbyCount(nearby.length);
-        nearby.forEach(p => addARObject(p, scene));
+        setNearbyCount(posts.length);
+        posts.forEach(p => addARObject(p, scene));
       });
     };
 
     if (scene.hasLoaded) initScene();
     else scene.addEventListener('loaded', initScene, { once: true });
+    
     scene.addEventListener('enter-vr', () => {
       setArActive(true);
-      // LOCK HEADING: Capture current compass value to fix the coordinate system
       lockedHeading.current = heading;
       console.log(`[Day-3] AR Started - Heading Locked: ${heading.toFixed(1)}°`);
     });
     scene.addEventListener('exit-vr', () => setArActive(false));
+
+    return () => {
+      if (socketRef.current) socketRef.current.off('new-post');
+    }
   }, [ready, userLoc, heading]);
 
   function addARObject(post, sceneEl) {
+    const isTemp = !post._id;
     const id = post._id || `temp-${Math.random()}`;
     if (document.getElementById(`post-${id}`)) return;
 
+    // Cleanup: If this is a REAL post, remove any TEMP posts nearby (within 1m)
+    if (!isTemp) {
+      const temps = document.querySelectorAll('[data-temp="true"]');
+      temps.forEach(t => {
+        // We use world coordinates for the proximity check
+        const dist = Math.hypot(t.object3D.position.x - post.x, t.object3D.position.z - post.z);
+        if (dist < 1) t.parentNode.removeChild(t);
+      });
+    }
+
     const wrapper = document.createElement('a-entity');
     wrapper.setAttribute('id', `post-${id}`);
+    if (isTemp) wrapper.setAttribute('data-temp', 'true');
     
     // Position anchoring logic: Apply COMPASS-STABLE GPS offset using the LOCKED heading
     const pos = post.lat && post.lng && post._id
@@ -208,15 +245,17 @@ export default function ARScene() {
 
     const newPost = { emoji: draftEmoji, x: position.x, y: position.y, z: position.z, lat: userLoc.lat, lng: userLoc.lng };
     const scene = sceneRef.current;
-    if (scene) addARObject(newPost, scene);
+    if (scene) addARObject(newPost, scene); // Add local temp version immediately
 
     createPost(newPost)
       .then(saved => {
         setStatus('Saved!');
-        setNearbyCount(prev => prev + 1);
+        // Note: Count is updated by the socket event 'new-post' to stay in sync
         setTimeout(() => setStatus(''), 2000);
       })
-      .catch(() => setStatus('Network Error'));
+      .catch((err) => {
+        setStatus(err.status === 409 ? 'Already exists!' : 'Network Error');
+      });
   }
 
   const enterAR = useCallback(async () => {
@@ -243,8 +282,11 @@ export default function ARScene() {
           webxr="requiredFeatures: hit-test,local-floor; optionalFeatures: dom-overlay; overlayElement: #ar-overlay"
           webxr-hit-test="reticle: #reticle"
         >
-          {/* Billboard plugin if needed */}
-          {/* <a-entity id="xr-camera" camera look-controls position="0 1.6 0" /> */}
+          {/* Advanced Lighting & Environment */}
+          <a-entity light="type: ambient; intensity: 0.6"></a-entity>
+          <a-entity light="type: directional; intensity: 0.8; castShadow: true; position: -1 2 1"></a-entity>
+          <a-entity environment="preset: contact; ground: none; lighting: none; skyType: none;"></a-entity>
+
           <a-camera id="xr-camera" position="0 1.6 0"></a-camera>
 
           {/* Hit Test Reticle */}
