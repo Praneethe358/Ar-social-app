@@ -38,4 +38,14 @@ router.post('/', async (req, res) => {
   }
 });
 
+// TEMPORARY: Clear all data to start fresh (Visit /api/posts/admin/clear in browser)
+router.get('/admin/clear', async (req, res) => {
+  try {
+    await Post.deleteMany({});
+    res.send('<h1>✅ Database Cleared!</h1><p>Your AR Social Network is now fresh. You can now go back to the app and place new emojis.</p>');
+  } catch (err) {
+    res.status(500).send('Error clearing database: ' + err.message);
+  }
+});
+
 export default router;
