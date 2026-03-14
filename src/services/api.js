@@ -12,13 +12,14 @@ function getBaseURL() {
 }
 
 export async function createPost(postData) {
-  const url = `${getBaseURL()}/posts`;
+  const url = `${getBaseURL()}/ar-posts`;
   try {
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(postData),
     });
+    if (!res.ok) throw new Error(`Status ${res.status}`);
     const data = await res.json();
     return data;
   } catch (error) {
@@ -28,9 +29,10 @@ export async function createPost(postData) {
 }
 
 export async function fetchNearbyPosts() {
-  const url = `${getBaseURL()}/posts`;
+  const url = `${getBaseURL()}/ar-posts`;
   try {
     const res = await fetch(url);
+    if (!res.ok) throw new Error(`Status ${res.status}`);
     const data = await res.json();
     return data;
   } catch (error) {
