@@ -30,7 +30,7 @@ export async function createPost(postData) {
 
 export async function fetchNearbyPosts(lat, lng) {
   const query = (lat && lng) ? `?lat=${lat}&lng=${lng}` : '';
-  const url = `${getBaseURL()}/posts${query}`;
+  const url = `${getBaseURL()}/posts/nearby${query}`;
   try {
     const res = await fetch(url);
     if (!res.ok) throw new Error(`Status ${res.status}`);

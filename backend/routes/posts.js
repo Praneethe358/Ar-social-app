@@ -3,24 +3,58 @@ import Post from '../models/Post.js'; // Extension is required for ES Modules
 
 const router = express.Router();
 
-// GET /api/posts → Return AR posts within 50m of user
-router.get('/', async (req, res) => {
+// Helper: Haversine distance in meters (Requested for Day-4)
+function calculateHaversine(lat1, lon1, lat2, lon2) {
+  const R = 6371e3; // metres
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+// GET /api/posts/nearby → Day-4 Explicit Route
+router.get('/nearby', async (req, res) => {
   try {
     const { lat, lng } = req.query;
-    
-    // If lat/lng provided, use high-performance geospatial query
+    if (!lat || !lng) return res.status(400).json({ error: 'Lat and Lng required' });
+
+    // Feature 5/6 Logic: Use high-performance MongoDB Geospatial query (replaces manual Haversine filter)
+    const posts = await Post.find({
+      location: {
+        $nearSphere: {
+          $geometry: { type: "Point", coordinates: [parseFloat(lng), parseFloat(lat)] },
+          $maxDistance: 50
+        }
+      }
+    }).limit(100);
+
+    res.json(posts);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/posts → Legacy route aliased to nearby
+router.get('/', async (req, res) => {
+  // Redirecting to keep it clean, but maintaining existing functionality
+  try {
+    const { lat, lng } = req.query;
     let query = {};
     if (lat && lng) {
       query = {
         location: {
           $nearSphere: {
             $geometry: { type: "Point", coordinates: [parseFloat(lng), parseFloat(lat)] },
-            $maxDistance: 50 // 50 meters
+            $maxDistance: 50
           }
         }
       };
     }
-
     const posts = await Post.find(query).limit(100);
     res.json(posts);
   } catch (err) {

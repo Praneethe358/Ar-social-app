@@ -106,6 +106,9 @@ export default function ARScene() {
         const loc = await getGPSLocation();
         if (!alive) return;
         setUserLoc(loc);
+        
+        // FEATURE 1: Export to global for Day-4 instructions
+        window.userLocation = { latitude: loc.lat, longitude: loc.lng };
 
         await new Promise((resolve) => {
           if (window.AFRAME) return resolve();
