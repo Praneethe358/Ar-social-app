@@ -224,7 +224,7 @@ function addTextToScene(sceneEl, text, pos, id) {
   return wrapper;
 }
 
-import { getGPSLocation, haversineDistance, isWithinRadius } from '../utils/geo.js';
+import { getGPSLocation, haversineDistance, isWithinRadius, calculateGPSOffset } from '../utils/geo.js';
 
 /* ─────────────────────────────────────────
    Persistence helpers
@@ -264,9 +264,18 @@ async function loadPosts(sceneEl, entitiesRef, userLoc, setNearbyCount, debugFn)
 
     nearby.forEach((p) => {
       if (!p.position) return;
+      
+      // Calculate true geographic offset! 
+      // If the user reloads the app 10m away, the emoji physically stays in place!
+      const anchoredPos = calculateGPSOffset(
+        userLoc.latitude, userLoc.longitude, 
+        p.latitude, p.longitude, 
+        p.position
+      );
+
       const entity = p.type === 'text'
-        ? addTextToScene(sceneEl, p.content, p.position, p._id)
-        : addEmojiToScene(sceneEl, p.content, p.position, p._id);
+        ? addTextToScene(sceneEl, p.content, anchoredPos, p._id)
+        : addEmojiToScene(sceneEl, p.content, anchoredPos, p._id);
       entitiesRef.current.push(entity);
     });
   } catch (err) {
