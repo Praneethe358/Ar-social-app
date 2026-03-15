@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import ARScene from './components/ARScene.jsx';
+import MapScreen from './components/MapScreen.jsx';
 import './styles.css';
 
 const NAV_ITEMS = [
@@ -14,14 +15,14 @@ export default function App() {
 
   return (
     <main className="app-shell">
-      <ARScene />
+      {activeTab === 'Camera' && <ARScene />}
+      {activeTab === 'Map' && <MapScreen />}
 
-      {activeTab !== 'Camera' && (
+      {activeTab !== 'Camera' && activeTab !== 'Map' && (
         <section className="panel-overlay">
           <h2>{activeTab}</h2>
           <p>
             {activeTab === 'Create AR Post' && 'Switch to Camera tab and tap Enter AR to place objects.'}
-            {activeTab === 'Map'            && 'Map view coming soon — see nearby AR posts.'}
             {activeTab === 'Profile'        && 'Profile view coming soon.'}
           </p>
         </section>

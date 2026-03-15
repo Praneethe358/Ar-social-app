@@ -6,6 +6,7 @@ import path from 'path';
 import { Server } from 'socket.io';
 import { createServer } from 'http';
 import postsRouter from './routes/posts.js';
+import hotspotsRouter from './routes/hotspots.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname  = path.dirname(__filename);
@@ -50,6 +51,7 @@ app.get('/api/health', (_req, res) => {
 });
 
 app.use('/api/posts', postsRouter);
+app.use('/api/hotspots', hotspotsRouter);
 
 /* ── Serve Vite build in production ── */
 const distPath = path.join(__dirname, '..', 'dist');
